@@ -1,0 +1,15 @@
+{
+  "name": "instagram-scraper-app",
+  "version": "1.0.0",
+  "description": "Instagram Message System",
+  "main": "app.py",
+  "scripts": {
+    "start": "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0"
+  },
+  "dependencies": {
+    "streamlit": "^1.28.0"
+  },
+  "engines": {
+    "python": "3.9"
+  }
+}
