@@ -1,44 +1,52 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { ConfigProvider } from 'antd';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from 'antd';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import ProtectedRoute from './components/ProtectedRoute';
 import Sidebar from './components/Sidebar';
-import Dashboard from './pages/Dashboard';
-import Scraper from './pages/Scraper';
-import Messages from './pages/Messages';
-import Analytics from './pages/Analytics';
-import Users from './pages/Users';
-import './App.css';
+import Campaigns from './pages/Campaigns';
+import Accounts from './pages/Accounts';
+import Leads from './pages/Leads';
+import Login from './pages/Login';
 
 const { Content } = Layout;
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
+  const { isAuthenticated } = useAuth();
+
   return (
-    <ConfigProvider
-      theme={{
-        token: {
-          colorPrimary: '#667eea',
-          borderRadius: 8,
-        },
-      }}
-    >
+    <Layout style={{ minHeight: '100vh', background: '#ffffff' }}>
+      {isAuthenticated && <Sidebar />}
+      <Layout style={{ background: '#ffffff' }}>
+        <Content style={{ 
+          margin: 0, 
+          padding: 0, 
+          background: '#ffffff', 
+          color: '#000000',
+          minHeight: '100vh'
+        }}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<Navigate to="/campaigns" replace />} />
+            <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
+            <Route path="/accounts" element={<ProtectedRoute><Accounts /></ProtectedRoute>} />
+            <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
+          </Routes>
+        </Content>
+      </Layout>
+    </Layout>
+  );
+};
+
+const App: React.FC = () => {
+  console.log('🔧 App component rendering...');
+  
+  return (
+    <AuthProvider>
       <Router>
-        <Layout style={{ minHeight: '100vh' }}>
-          <Sidebar />
-          <Layout>
-            <Content style={{ margin: '24px 16px', padding: 24, background: '#fff', borderRadius: 8 }}>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/scraper" element={<Scraper />} />
-                <Route path="/messages" element={<Messages />} />
-                <Route path="/analytics" element={<Analytics />} />
-                <Route path="/users" element={<Users />} />
-              </Routes>
-            </Content>
-          </Layout>
-        </Layout>
+        <AppContent />
       </Router>
-    </ConfigProvider>
+    </AuthProvider>
   );
 };
 

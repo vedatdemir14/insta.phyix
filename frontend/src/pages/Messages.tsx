@@ -31,7 +31,7 @@ const Messages: React.FC = () => {
         status: 'sent'
       }]);
       
-      form.resetFields();
+      // Keep form inputs filled - don't reset
       
     } catch (error: any) {
       message.destroy();
@@ -140,3 +140,8 @@ const Messages: React.FC = () => {
 };
 
 export default Messages;
+
+
+
+
+

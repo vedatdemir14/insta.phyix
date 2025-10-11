@@ -4,7 +4,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  // timeout: 120000, // Timeout completely removed for scraping operations
   headers: {
     'Content-Type': 'application/json',
   },
@@ -112,6 +112,18 @@ export const apiService = {
     const response = await api.get('/dashboard/stats');
     return response.data;
   },
+
+  // Campaign endpoints
+  locationScraping: async (data: any) => {
+    const response = await api.post('/campaigns/location-scraping', data);
+    return response.data;
+  },
+
+  nationalityClassification: async (data: any) => {
+    const response = await api.post('/campaigns/nationality-classification', data);
+    return response.data;
+  },
 };
 
 export default api;
+

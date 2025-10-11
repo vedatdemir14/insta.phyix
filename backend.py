@@ -88,6 +88,9 @@ class InstagramBackend:
                 'APIFY_API_TOKEN': os.getenv('APIFY_API_TOKEN'),
                 'UNIPILE_API_KEY': os.getenv('UNIPILE_API_KEY', 'k8IpFvnp.1H5f5alAgW2gK5M+J4GvW2M1lavbPHdsZfUGXBbEF+U='),
                 'UNIPILE_BASE_URL': os.getenv('UNIPILE_BASE_URL', 'https://api21.unipile.com:15121'),
+                'OPENROUTER_API_KEY': os.getenv('OPENROUTER_API_KEY', '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'),
+                'INSTAGRAM_USERNAME': os.getenv('INSTAGRAM_USERNAME', 'your_instagram_username'),
+                'INSTAGRAM_PASSWORD': os.getenv('INSTAGRAM_PASSWORD', 'your_instagram_password'),
                 'POSTGRES_HOST': os.getenv('POSTGRES_HOST'),
                 'POSTGRES_PORT': os.getenv('POSTGRES_PORT', '5432'),
                 'POSTGRES_DB': os.getenv('POSTGRES_DB'),
@@ -98,11 +101,26 @@ class InstagramBackend:
         self.config = config
         self.supabase = None
         self.postgres_conn = None
+        
+        # In-memory storage for leads and sessions (replace with database later)
+        self.leads_storage = []
+        self.sessions_storage = []
+        self.instagram_accounts = []
         self.supabase_connected = False
         self.postgres_connected = False
         
+        # Global driver for bulk campaigns
+        self.global_driver = None
+        self._bulk_campaign_active = False
+        
         # Initialize database connections
         self._setup_database_connections()
+        
+        # Create tables if they don't exist
+        self._create_tables_if_not_exist()
+        
+        # Load existing data from Supabase on startup
+        self._load_data_from_supabase()
     
     def _setup_database_connections(self):
         """Setup database connections (Supabase and PostgreSQL)"""
@@ -247,41 +265,280 @@ class InstagramBackend:
         except Exception as e:
             return False, f"Error preparing profiles data: {str(e)}"
     
-    def save_nationality_results(self, classified_df, session_id=None):
-        """Save nationality classification results"""
+    def save_nationality_results(self, classified_df, session_name=None):
+        """Save nationality classification results to leads - update existing or create new"""
         if classified_df.empty:
-            return False, "No classification results to save"
+            return []
         
         try:
-            nationality_data = []
+            leads_data = []
+            updated_count = 0
+            new_count = 0
+            
             for _, row in classified_df.iterrows():
-                nationality_record = {
-                    "session_id": session_id or f"session_{int(time.time())}",
-                    "username": row.get("Username", ""),
-                    "full_name": row.get("Full Name", ""),
-                    "nationality": row.get("Nationality", ""),
-                    "detection_date": row.get("Detection_Date", datetime.now().isoformat()),
-                    "followers_count": int(row.get("Followers Count", 0)),
-                    "created_at": datetime.now().isoformat()
-                }
-                nationality_data.append(nationality_record)
-            
-            # Insert in batches
-            batch_size = 1000
-            total_saved = 0
-            
-            for i in range(0, len(nationality_data), batch_size):
-                batch = nationality_data[i:i + batch_size]
-                success, message = self.save_to_database("nationality_classifications", batch)
-                if success:
-                    total_saved += len(batch)
+                username = row.get("username", "")
+                nationality = row.get("Nationality", "")
+                
+                # Check if lead already exists in this session
+                existing_lead = None
+                for i, lead in enumerate(self.leads_storage):
+                    if (lead.get('username', '').lower() == username.lower() and 
+                        lead.get('session_name', '') == session_name):
+                        existing_lead = i
+                        break
+                
+                if existing_lead is not None:
+                    # Update existing lead with nationality data
+                    self.leads_storage[existing_lead]['nationality'] = nationality
+                    self.leads_storage[existing_lead]['last_updated'] = datetime.now().isoformat()
+                    updated_count += 1
+                    print(f"✅ Updated existing lead {username} with nationality: {nationality}")
+                    
+                    # Also update in Supabase
+                    if self.supabase_connected:
+                        try:
+                            self.supabase.table("leads").update({
+                                "nationality": nationality,
+                                "last_updated": datetime.now().isoformat()
+                            }).eq("username", username).eq("session_name", session_name).execute()
+                            print(f"💾 Updated lead {username} nationality in Supabase")
+                        except Exception as update_error:
+                            print(f"⚠️ Warning: Could not update lead in Supabase: {update_error}")
                 else:
-                    return False, f"Error in nationality batch {i//batch_size + 1}: {message}"
+                    # Create new lead record
+                    lead_record = {
+                        "id": f"lead_{int(time.time())}_{username}",
+                        "username": username,
+                        "full_name": row.get("full_name", ""),
+                        "followers_count": int(row.get("followers_count", 0)),
+                        "following_count": int(row.get("following_count", 0)),
+                        "posts_count": int(row.get("posts_count", 0)),
+                        "is_verified": False,  # Default value
+                        "profile_pic_url": "",  # Default value
+                        "nationality": nationality,
+                        "session_name": session_name or f"Nationality Classification - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        "scraped_at": row.get("Detection_Date", datetime.now().isoformat()),
+                        "created_at": datetime.now().isoformat()
+                    }
+                    leads_data.append(lead_record)
+                    new_count += 1
             
-            return True, f"Saved {total_saved} nationality classifications to database"
+            # Add new leads to storage
+            if leads_data:
+                self.leads_storage.extend(leads_data)
+                
+                # Also save to Supabase for persistence
+                if self.supabase_connected:
+                    try:
+                        # Save leads to Supabase
+                        for lead in leads_data:
+                            lead_data = [{
+                                "username": lead["username"],
+                                "full_name": lead["full_name"],
+                                "followers_count": lead["followers_count"],
+                                "following_count": lead["following_count"],
+                                "posts_count": lead["posts_count"],
+                                "is_verified": lead["is_verified"],
+                                "profile_pic_url": lead["profile_pic_url"],
+                    "nationality": lead["nationality"],
+                    "session_name": lead["session_name"],
+                                "scraped_at": lead["scraped_at"],
+                                "created_at": lead["created_at"]
+                            }]
+                            self.save_to_database("leads", lead_data)
+                        
+                        print(f"💾 Saved {len(leads_data)} leads to Supabase for persistence")
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not save leads to Supabase: {e}")
+            
+            # Update or create session
+            session_exists = False
+            for session in self.sessions_storage:
+                if session['name'] == session_name:
+                    session['lead_count'] = len([l for l in self.leads_storage if l.get('session_name') == session_name])
+                    session['last_updated'] = datetime.now().isoformat()
+                    session_exists = True
+                    break
+            
+            if not session_exists:
+                new_session = {
+                    "id": f"session_{int(time.time())}",
+                    "name": session_name,
+                    "lead_count": len(leads_data),
+                    "created_at": datetime.now().isoformat(),
+                    "last_updated": datetime.now().isoformat()
+                }
+                self.sessions_storage.append(new_session)
+                
+                # Also save session to Supabase for persistence
+                if self.supabase_connected:
+                    try:
+                        session_data = [{
+                            "session_id": new_session["id"],
+                            "session_name": new_session["name"],
+                            "lead_count": new_session["lead_count"],
+                            "created_at": new_session["created_at"],
+                            "last_updated": new_session["last_updated"]
+                        }]
+                        self.save_to_database("sessions", session_data)
+                        print(f"💾 Saved session '{session_name}' to Supabase for persistence")
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not save session to Supabase: {e}")
+            
+            print(f"📊 Updated {updated_count} existing leads, added {new_count} new leads")
+            print(f"📊 Total leads in storage: {len(self.leads_storage)}")
+            print(f"📊 Total sessions in storage: {len(self.sessions_storage)}")
+            return leads_data
             
         except Exception as e:
-            return False, f"Error preparing nationality data: {str(e)}"
+            print(f"❌ Error preparing nationality data: {str(e)}")
+            return []
+    
+    def _load_data_from_supabase(self):
+        """Load existing data from Supabase on startup"""
+        if not self.supabase_connected:
+            print("⚠️ Supabase not connected, skipping data load")
+            return
+        
+        try:
+            print("🔄 Loading existing data from Supabase...")
+            
+            # Load leads from Supabase
+            leads_result = self.supabase.table("leads").select("*").execute()
+            if leads_result.data:
+                self.leads_storage = leads_result.data
+                print(f"✅ Loaded {len(self.leads_storage)} leads from Supabase")
+            else:
+                print("📝 No existing leads found in Supabase")
+            
+            # Load sessions from Supabase
+            sessions_result = self.supabase.table("sessions").select("*").execute()
+            if sessions_result.data:
+                self.sessions_storage = sessions_result.data
+                print(f"✅ Loaded {len(self.sessions_storage)} sessions from Supabase")
+            else:
+                print("📝 No existing sessions found in Supabase")
+            
+            # Load Instagram accounts from Supabase
+            accounts_result = self.supabase.table("instagram_accounts").select("*").execute()
+            if accounts_result.data:
+                self.instagram_accounts = accounts_result.data
+                print(f"✅ Loaded {len(self.instagram_accounts)} Instagram accounts from Supabase")
+            else:
+                print("📝 No existing Instagram accounts found in Supabase")
+                
+        except Exception as e:
+            print(f"⚠️ Warning: Could not load data from Supabase: {e}")
+            print("📝 Starting with empty storage")
+    
+    def _create_tables_if_not_exist(self):
+        """Create necessary tables in Supabase if they don't exist"""
+        if not self.supabase_connected:
+            print("⚠️ Supabase not connected, skipping table creation")
+            return
+        
+        try:
+            print("🔧 Creating tables in Supabase...")
+            
+            # Create leads table
+            leads_sql = """
+            CREATE TABLE IF NOT EXISTS leads (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) NOT NULL,
+                full_name VARCHAR(255),
+                followers_count INTEGER DEFAULT 0,
+                following_count INTEGER DEFAULT 0,
+                posts_count INTEGER DEFAULT 0,
+                is_verified BOOLEAN DEFAULT FALSE,
+                profile_pic_url TEXT,
+                nationality VARCHAR(255),
+                session_name VARCHAR(255),
+                scraped_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                last_updated TIMESTAMP DEFAULT NOW()
+            );
+            """
+            
+            # Create sessions table
+            sessions_sql = """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id SERIAL PRIMARY KEY,
+                session_id VARCHAR(255) UNIQUE NOT NULL,
+                session_name VARCHAR(255) NOT NULL,
+                lead_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW(),
+                last_updated TIMESTAMP DEFAULT NOW()
+            );
+            """
+            
+            # Create Instagram accounts table
+            accounts_sql = """
+            CREATE TABLE IF NOT EXISTS instagram_accounts (
+                id VARCHAR(255) PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                display_name VARCHAR(255),
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT NOW(),
+                last_updated TIMESTAMP DEFAULT NOW()
+            );
+            """
+            
+            # Execute SQL commands
+            try:
+                self.supabase.rpc('exec_sql', {'sql': leads_sql}).execute()
+                print("✅ Leads table created")
+            except Exception as e:
+                print(f"⚠️ Leads table creation failed: {e}")
+            
+            try:
+                self.supabase.rpc('exec_sql', {'sql': sessions_sql}).execute()
+                print("✅ Sessions table created")
+            except Exception as e:
+                print(f"⚠️ Sessions table creation failed: {e}")
+            
+            try:
+                self.supabase.rpc('exec_sql', {'sql': accounts_sql}).execute()
+                print("✅ Instagram accounts table created")
+            except Exception as e:
+                print(f"⚠️ Instagram accounts table creation failed: {e}")
+                print("📝 Please create the table manually in Supabase Dashboard")
+                print("SQL: CREATE TABLE instagram_accounts (id VARCHAR(255) PRIMARY KEY, username VARCHAR(255) UNIQUE NOT NULL, password VARCHAR(255) NOT NULL, display_name VARCHAR(255), is_active BOOLEAN DEFAULT true, created_at TIMESTAMP DEFAULT NOW(), last_updated TIMESTAMP DEFAULT NOW());")
+            
+            print("✅ Table creation process completed")
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Could not create tables: {e}")
+            print("📝 You may need to create tables manually in Supabase Dashboard")
+            print("📝 SQL Commands to run manually:")
+            print("""
+            -- Create leads table
+            CREATE TABLE IF NOT EXISTS leads (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) NOT NULL,
+                full_name VARCHAR(255),
+                followers_count INTEGER DEFAULT 0,
+                following_count INTEGER DEFAULT 0,
+                posts_count INTEGER DEFAULT 0,
+                is_verified BOOLEAN DEFAULT FALSE,
+                profile_pic_url TEXT,
+                nationality VARCHAR(255),
+                session_name VARCHAR(255),
+                scraped_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                last_updated TIMESTAMP DEFAULT NOW()
+            );
+            
+            -- Create sessions table
+            CREATE TABLE IF NOT EXISTS sessions (
+                id SERIAL PRIMARY KEY,
+                session_id VARCHAR(255) UNIQUE NOT NULL,
+                session_name VARCHAR(255) NOT NULL,
+                lead_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW(),
+                last_updated TIMESTAMP DEFAULT NOW()
+            );
+            """)
     
     # =========================================================
     # 2FA Helper Functions
@@ -3056,3 +3313,623 @@ Umarım bu mesaj sizi rahatsız etmez.
         except Exception as e:
             print(f"❌ Error getting historical leads: {e}")
             return []
+    
+    def get_all_leads(self):
+        """Get all leads from storage"""
+        try:
+            print(f"🔍 Getting all leads from storage: {len(self.leads_storage)} leads")
+            return self.leads_storage
+        except Exception as e:
+            print(f"❌ Error getting leads: {str(e)}")
+            return []
+    
+    def get_all_sessions(self):
+        """Get all sessions from storage"""
+        try:
+            print(f"🔍 Getting all sessions from storage: {len(self.sessions_storage)} sessions")
+            return self.sessions_storage
+        except Exception as e:
+            print(f"❌ Error getting sessions: {str(e)}")
+            return []
+    
+    def get_leads_by_session(self, session_name):
+        """Get leads filtered by session name"""
+        try:
+            filtered_leads = [lead for lead in self.leads_storage if lead.get('session_name') == session_name]
+            print(f"🔍 Getting leads for session '{session_name}': {len(filtered_leads)} leads")
+            return filtered_leads
+        except Exception as e:
+            print(f"❌ Error getting leads by session: {str(e)}")
+            return []
+    
+    def _create_driver(self):
+        """Create and configure Chrome WebDriver"""
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        
+        chrome_options = Options()
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        # Instagram'a git ve giriş yap
+        driver.get("https://www.instagram.com/")
+        time.sleep(3)
+        
+        # Giriş kontrolü
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        
+        try:
+            WebDriverWait(driver, 5).until(
+                EC.any_of(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='direct-inbox']")),
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/direct/']"))
+                )
+            )
+            print("✅ Already logged in to Instagram")
+        except:
+            print("🔐 Not logged in, attempting to login...")
+            ig_username = self.config.get('INSTAGRAM_USERNAME')
+            ig_password = self.config.get('INSTAGRAM_PASSWORD')
+
+            if not ig_username or not ig_password:
+                print("❌ Instagram credentials not configured")
+                raise Exception("Instagram credentials not configured")
+
+            username_input = driver.find_element(By.CSS_SELECTOR, "input[name='username']")
+            password_input = driver.find_element(By.CSS_SELECTOR, "input[name='password']")
+            username_input.send_keys(ig_username)
+            password_input.send_keys(ig_password)
+            driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+            time.sleep(5)
+
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.any_of(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='direct-inbox']")),
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/direct/']"))
+                    )
+                )
+                print("✅ Successfully logged in to Instagram")
+            except:
+                print("❌ Login failed - check credentials or 2FA")
+                raise Exception("Login failed - check credentials or 2FA")
+        
+        return driver
+    
+    def send_instagram_message(self, username, message_content, delay_seconds=2):
+        """Send Instagram message to a user using Selenium automation"""
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import TimeoutException
+        from selenium.webdriver.common.action_chains import ActionChains
+        from datetime import datetime
+        import time
+
+        driver = self.global_driver
+        if not driver:
+            driver = self._create_driver()
+            self.global_driver = driver
+
+        try:
+            print(f"💬 Starting message process for @{username}...")
+            print(f"📝 Message: {message_content}")
+
+            # Önce profili ziyaret et
+            profile_url = f"https://www.instagram.com/{username}/"
+            print(f"🔍 Navigating to profile: {profile_url}")
+            driver.get(profile_url)
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            time.sleep(3)
+            
+            # Mesaj butonunu bul ve tıkla
+            message_button_selectors = [
+                "//button[contains(text(), 'Message')]",
+                "//button[contains(text(), 'Mesaj')]",
+                "//a[contains(text(), 'Message')]",
+                "//a[contains(text(), 'Mesaj')]",
+                "//div[contains(@role, 'button') and contains(text(), 'Message')]",
+                "//div[contains(@role, 'button') and contains(text(), 'Mesaj')]",
+                "//button[contains(@aria-label, 'Message')]",
+                "//button[contains(@aria-label, 'Mesaj')]"
+            ]
+            
+            message_button = None
+            for selector in message_button_selectors:
+                try:
+                    message_button = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((By.XPATH, selector))
+                    )
+                    print(f"📨 Found message button with selector: {selector}")
+                    break
+                except TimeoutException:
+                    continue
+            
+            if not message_button:
+                print(f"❌ Message button not found for @{username}")
+                return {
+                    "success": False,
+                    "username": username,
+                    "error": "Message button not found",
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            # Mesaj butonuna tıkla
+            try:
+                message_button.click()
+                print(f"📨 Clicked message button for @{username}")
+                time.sleep(3)  # Mesaj sayfasının yüklenmesi için bekle
+                
+                # Mesaj kutusunu bul ve mesajı yaz
+                print(f"🔍 Looking for message input box...")
+                try:
+                    message_box = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "div[contenteditable='true']"))
+                    )
+                    print(f"✅ Message input box found")
+                    message_box.click()
+                    time.sleep(1)
+                    print(f"📝 Typing message: {message_content}")
+                    # Emoji karakterlerini kaldır veya ASCII karakterlerle değiştir
+                    clean_message = message_content.replace('😊', ':)').replace('😀', ':)').replace('😃', ':)').replace('😄', ':)').replace('😁', ':)').replace('😆', ':)').replace('😅', ':)').replace('😂', ':)').replace('🤣', ':)').replace('😊', ':)').replace('😇', ':)').replace('🙂', ':)').replace('🙃', ':)').replace('😉', ';)').replace('😌', ':)').replace('😍', ':)').replace('🥰', ':)').replace('😘', ':)').replace('😗', ':)').replace('😙', ':)').replace('😚', ':)').replace('😋', ':)').replace('😛', ':)').replace('😝', ':)').replace('😜', ';)').replace('🤪', ';)').replace('🤨', ';)').replace('🧐', ';)').replace('🤓', ';)').replace('😎', ';)').replace('🤩', ';)').replace('🥳', ';)').replace('😏', ';)').replace('😒', ';)').replace('😞', ';)').replace('😔', ';)').replace('😟', ';)').replace('😕', ';)').replace('🙁', ';)').replace('☹️', ';)').replace('😣', ';)').replace('😖', ';)').replace('😫', ';)').replace('😩', ';)').replace('🥺', ';)').replace('😢', ';)').replace('😭', ';)').replace('😤', ';)').replace('😠', ';)').replace('😡', ';)').replace('🤬', ';)').replace('🤯', ';)').replace('😳', ';)').replace('🥵', ';)').replace('🥶', ';)').replace('😱', ';)').replace('😨', ';)').replace('😰', ';)').replace('😥', ';)').replace('😓', ';)').replace('🤗', ';)').replace('🤔', ';)').replace('🤭', ';)').replace('🤫', ';)').replace('🤥', ';)').replace('😶', ';)').replace('😐', ';)').replace('😑', ';)').replace('😬', ';)').replace('🙄', ';)').replace('😯', ';)').replace('😦', ';)').replace('😧', ';)').replace('😮', ';)').replace('😲', ';)').replace('🥱', ';)').replace('😴', ';)').replace('🤤', ';)').replace('😪', ';)').replace('😵', ';)').replace('🤐', ';)').replace('🥴', ';)').replace('🤢', ';)').replace('🤮', ';)').replace('🤧', ';)').replace('😷', ';)').replace('🤒', ';)').replace('🤕', ';)').replace('🤑', ';)').replace('🤠', ';)').replace('😈', ';)').replace('👿', ';)').replace('👹', ';)').replace('👺', ';)').replace('🤡', ';)').replace('💩', ';)').replace('👻', ';)').replace('💀', ';)').replace('☠️', ';)').replace('👽', ';)').replace('👾', ';)').replace('🤖', ';)').replace('🎃', ';)').replace('😺', ';)').replace('😸', ';)').replace('😹', ';)').replace('😻', ';)').replace('😼', ';)').replace('😽', ';)').replace('🙀', ';)').replace('😿', ';)').replace('😾', ';)')
+                    message_box.send_keys(clean_message)
+                    print("✅ Message typed successfully")
+                    time.sleep(2)
+                except Exception as e:
+                    print(f"❌ Error finding message input: {str(e)}")
+                    return {
+                        "success": False,
+                        "username": username,
+                        "error": f"Message input not found: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                
+                # Gönder butonunu bul (HTML'deki yapıya göre)
+                print(f"🔍 Looking for send button...")
+                send_selectors = [
+                    "//div[@aria-label='Send' and @role='button']",
+                    "//div[@aria-label='Send']",
+                    "//div[contains(@class, 'x1i10hfl') and contains(@class, 'x972fbf') and @role='button']",
+                    "//div[@role='button' and .//svg[@aria-label='Send']]",
+                    "//div[contains(@class, 'x1i10hfl') and @role='button']",
+                    "//button[contains(text(), 'Send')]",
+                    "//button[contains(text(), 'Gönder')]",
+                    "//button[contains(@aria-label, 'Send')]",
+                    "//button[contains(@aria-label, 'Gönder')]",
+                    "//button[@type='submit']"
+                ]
+
+                send_button = None
+                for selector in send_selectors:
+                    try:
+                        send_button = WebDriverWait(driver, 2).until(
+                            EC.element_to_be_clickable((By.XPATH, selector))
+                        )
+                        print(f"📤 Found send button with selector: {selector}")
+                        break
+                    except TimeoutException:
+                        continue
+
+                if not send_button:
+                    print("❌ Send button not found with any selector")
+                    return {
+                        "success": False,
+                        "username": username,
+                        "error": "Send button not found",
+                        "timestamp": datetime.now().isoformat()
+                    }
+
+                # Gönder butonuna tıklama denemeleri
+                print("📤 Attempting to send message...")
+                click_successful = False
+                
+                # Method 1: Regular click
+                try:
+                    send_button.click()
+                    print("✅ Regular click successful")
+                    click_successful = True
+                except Exception as e1:
+                    print(f"⚠️ Regular click failed: {str(e1)}")
+                    
+                    # Method 2: JavaScript click with focus
+                    try:
+                        driver.execute_script("""
+                            arguments[0].focus();
+                            arguments[0].click();
+                        """, send_button)
+                        print("✅ JavaScript click with focus successful")
+                        click_successful = True
+                    except Exception as e2:
+                        print(f"⚠️ JavaScript click with focus failed: {str(e2)}")
+                        
+                        # Method 3: ActionChains click
+                        try:
+                            ActionChains(driver).move_to_element(send_button).click().perform()
+                            print("✅ ActionChains click successful")
+                            click_successful = True
+                        except Exception as e3:
+                            print(f"⚠️ ActionChains click failed: {str(e3)}")
+                            
+                            # Method 4: JavaScript event dispatch
+                            try:
+                                driver.execute_script("""
+                                    var element = arguments[0];
+                                    var event = new MouseEvent('click', {
+                                        view: window,
+                                        bubbles: true,
+                                        cancelable: true
+                                    });
+                                    element.dispatchEvent(event);
+                                """, send_button)
+                                print("✅ JavaScript event dispatch successful")
+                                click_successful = True
+                            except Exception as e4:
+                                print(f"❌ All click methods failed: {str(e4)}")
+
+                if not click_successful:
+                    return {
+                        "success": False,
+                        "username": username,
+                        "error": "Failed to click send button with all methods",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                
+                # Mesajın gönderilmesi için bekle
+                time.sleep(3)
+                print(f"✅ Message sent to @{username}")
+                
+                # Başarılı sonuç döndür
+                return {
+                    "success": True,
+                    "username": username,
+                    "message": "Message sent successfully",
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+            except Exception as e:
+                print(f"❌ Error clicking message button: {str(e)}")
+                return {
+                    "success": False,
+                    "username": username,
+                    "error": f"Error clicking message button: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                }
+
+
+        except Exception as e:
+            import traceback
+            print(f"❌ Error sending message to @{username}: {str(e)}")
+            print(f"❌ Error type: {type(e).__name__}")
+            print(f"❌ Traceback:\n{traceback.format_exc()}")
+            return {
+                "success": False,
+                "username": username,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+
+        finally:
+            # Sadece tek mesaj gönderiminde browser'ı kapat
+            if driver and not getattr(self, "_bulk_campaign_active", False):
+                driver.quit()
+                self.global_driver = None
+                print("🔒 Browser closed after single message")
+
+
+    def send_message_campaign(self, usernames, template_content, delay_seconds=2):
+        """Send message campaign to multiple users with automatic translation"""
+        from datetime import datetime
+        import time
+
+        try:
+            print(f"🚀 Starting message campaign for {len(usernames)} users")
+            print(f"🌐 Translation enabled: Foreign accounts will receive messages in their language")
+            
+            # Bulk campaign flag'ini ayarla
+            self._bulk_campaign_active = True
+            
+            # Get leads data for nationality-based translation
+            leads_data = self.get_all_leads()
+            print(f"📊 Found {len(leads_data)} leads with nationality data")
+            
+            results = []
+            for i, username in enumerate(usernames):
+                print(f"\n{'='*60}")
+                print(f"📤 Sending message {i+1}/{len(usernames)} to @{username}")
+                print(f"{'='*60}")
+                
+                # {username} placeholder'ını gerçek kullanıcı adıyla değiştir
+                personalized_message = template_content.replace('{username}', username)
+                
+                # Translate message based on user's nationality
+                translated_message = self.translate_message_for_user(personalized_message, username, leads_data)
+                
+                if translated_message != personalized_message:
+                    print(f"🌍 Message translated for {username}")
+                    print(f"📝 Original: {personalized_message[:100]}...")
+                    print(f"📝 Translated: {translated_message[:100]}...")
+                else:
+                    print(f"🇹🇷 Using original Turkish message for {username}")
+                
+                result = self.send_instagram_message(username, translated_message, delay_seconds)
+                results.append(result)
+                
+                # Son mesaj dışında bekle
+                if i < len(usernames) - 1:
+                    print(f"⏱️ Waiting {delay_seconds} seconds before next message...")
+                    time.sleep(delay_seconds)
+            
+            # İstatistikleri hesapla
+            successful = len([r for r in results if r.get('success')])
+            failed = len(results) - successful
+            
+            print(f"\n{'='*60}")
+            print(f"✅ Campaign completed!")
+            print(f"📊 Total: {len(usernames)} | Successful: {successful} | Failed: {failed}")
+            print(f"{'='*60}")
+            
+            return {
+                "success": True,
+                "total_sent": len(usernames),
+                "successful": successful,
+                "failed": failed,
+                "results": results,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            import traceback
+            print(f"❌ Error in message campaign: {str(e)}")
+            print(f"❌ Traceback:\n{traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        finally:
+            # Campaign tamamlandıktan sonra browser'ı kapat ve flag'i sıfırla
+            self._bulk_campaign_active = False
+            if self.global_driver:
+                self.global_driver.quit()
+                self.global_driver = None
+                print("🔒 Global browser closed after campaign completion")
+
+    def translate_message_with_deepl(self, message, target_language="EN"):
+        """Translate message using DeepL API"""
+        try:
+            import requests
+            
+            if not self.config.get('DEEPL_API_KEY'):
+                print("⚠️ DeepL API key not configured")
+                return message
+            
+            # DeepL API endpoint
+            url = "https://api-free.deepl.com/v2/translate"
+            
+            # API request parameters
+            params = {
+                'auth_key': self.config['DEEPL_API_KEY'],
+                'text': message,
+                'target_lang': target_language,
+                'source_lang': 'TR'  # Turkish source
+            }
+            
+            print(f"🌐 Translating message to {target_language}: {message[:50]}...")
+            
+            response = requests.post(url, data=params)
+            
+            if response.status_code == 200:
+                result = response.json()
+                translated_text = result['translations'][0]['text']
+                print(f"✅ Translation successful: {translated_text[:50]}...")
+                return translated_text
+            else:
+                print(f"❌ DeepL API error: {response.status_code} - {response.text}")
+                return message
+                
+        except Exception as e:
+            print(f"❌ Translation error: {str(e)}")
+            return message
+
+    def get_target_language_for_nationality(self, nationality):
+        """Get target language code for nationality"""
+        nationality_upper = nationality.upper().strip()
+        
+        # Check if it's Turkish (no translation needed)
+        if 'TÜRK' in nationality_upper or 'TURK' in nationality_upper:
+            return 'TR'
+        
+        # Handle Turkish format: "YABANCI - COUNTRY"
+        if 'YABANCI' in nationality_upper:
+            # Extract country name after "YABANCI - "
+            country_part = nationality_upper.replace('YABANCI', '').replace('-', '').strip()
+            
+            # Map Turkish country names to language codes
+            turkish_country_map = {
+                'ABD': 'EN',           # United States
+                'AMERİKA': 'EN',       # America
+                'İNGİLTERE': 'EN',     # England
+                'İNGİLİZ': 'EN',       # English
+                'ALMANYA': 'DE',       # Germany
+                'ALMAN': 'DE',         # German
+                'FRANSA': 'FR',        # France
+                'FRANSIZ': 'FR',       # French
+                'İSPANYA': 'ES',       # Spain
+                'İSPANYOL': 'ES',      # Spanish
+                'İTALYA': 'IT',        # Italy
+                'İTALYAN': 'IT',       # Italian
+                'RUSYA': 'RU',         # Russia
+                'RUS': 'RU',           # Russian
+                'ARAP': 'AR',          # Arabic
+                'ARAPÇA': 'AR',        # Arabic
+                'İRAN': 'FA',          # Iran
+                'İRANLI': 'FA',        # Iranian
+                'FARS': 'FA',          # Persian
+                'ÇİN': 'ZH',           # China
+                'ÇİNLİ': 'ZH',         # Chinese
+                'JAPONYA': 'JA',       # Japan
+                'JAPON': 'JA',         # Japanese
+                'KORE': 'KO',          # Korea
+                'KORELİ': 'KO',        # Korean
+                'BREZİLYA': 'PT',      # Brazil
+                'BREZİLYALI': 'PT',    # Brazilian
+                'PORTEKİZ': 'PT',      # Portugal
+                'PORTEKİZLİ': 'PT',    # Portuguese
+                'HOLLANDA': 'NL',      # Netherlands
+                'HOLLANDALI': 'NL',    # Dutch
+                'POLONYA': 'PL',       # Poland
+                'POLONYALI': 'PL',     # Polish
+                'YUNANİSTAN': 'EL',    # Greece
+                'YUNAN': 'EL',         # Greek
+                'İSRAİL': 'HE',        # Israel
+                'İSRAİLLİ': 'HE',      # Israeli
+                'SLOVAKYA': 'SK',      # Slovakia
+                'SLOVAK': 'SK',        # Slovak
+                'KAZAKİSTAN': 'KK',    # Kazakhstan
+                'KAZAK': 'KK',         # Kazakh
+                'MEKSİKA': 'ES',       # Mexico
+                'MEKSİKALI': 'ES',     # Mexican
+                'ÖZBEKİSTAN': 'UZ',   # Uzbekistan
+                'ÖZBEK': 'UZ',        # Uzbek
+                'UKRAYNA': 'UK',       # Ukraine
+                'UKRAYNALI': 'UK',     # Ukrainian
+                'ROMANYA': 'RO',       # Romania
+                'ROMANYALI': 'RO',    # Romanian
+                'BULGARİSTAN': 'BG',   # Bulgaria
+                'BULGAR': 'BG',        # Bulgarian
+                'MACARİSTAN': 'HU',    # Hungary
+                'MACAR': 'HU',         # Hungarian
+                'ÇEK': 'CS',           # Czech
+                'ÇEK CUMHURİYETİ': 'CS', # Czech Republic
+                'AVUSTURYA': 'DE',     # Austria
+                'AVUSTURYALI': 'DE',   # Austrian
+                'İSVİÇRE': 'DE',       # Switzerland
+                'İSVİÇRELİ': 'DE',     # Swiss
+                'BELÇİKA': 'NL',       # Belgium
+                'BELÇİKALI': 'NL',     # Belgian
+                'DANİMARKA': 'DA',     # Denmark
+                'DANİMARKALI': 'DA',   # Danish
+                'İSVEÇ': 'SV',         # Sweden
+                'İSVEÇLİ': 'SV',       # Swedish
+                'NORVEÇ': 'NO',        # Norway
+                'NORVEÇLİ': 'NO',      # Norwegian
+                'FİNLANDİYA': 'FI',    # Finland
+                'FİNLANDİYALI': 'FI',  # Finnish
+                'KANADA': 'EN',        # Canada
+                'KANADALI': 'EN',      # Canadian
+                'AVUSTRALYA': 'EN',    # Australia
+                'AVUSTRALYALI': 'EN',  # Australian
+                'YENİ ZELANDA': 'EN',  # New Zealand
+                'YENİ ZELANDALI': 'EN', # New Zealander
+                'GÜNEY AFRİKA': 'EN',  # South Africa
+                'GÜNEY AFRİKALI': 'EN', # South African
+                'HİNDİSTAN': 'HI',     # India
+                'HİNDİSTANLI': 'HI',   # Indian
+                'PAKİSTAN': 'UR',      # Pakistan
+                'PAKİSTANLI': 'UR',    # Pakistani
+                'BANGLADEŞ': 'BN',     # Bangladesh
+                'BANGLADEŞLİ': 'BN',   # Bangladeshi
+                'SRI LANKA': 'SI',     # Sri Lanka
+                'SRI LANKALI': 'SI',   # Sri Lankan
+                'NEPAL': 'NE',         # Nepal
+                'NEPALLI': 'NE',       # Nepalese
+                'BURMA': 'MY',         # Myanmar
+                'BURMALI': 'MY',       # Burmese
+                'TAYLAND': 'TH',       # Thailand
+                'TAYLANDLI': 'TH',     # Thai
+                'VİETNAM': 'VI',       # Vietnam
+                'VİETNAMLI': 'VI',     # Vietnamese
+                'KAMBOÇYA': 'KM',      # Cambodia
+                'KAMBOÇYALI': 'KM',    # Cambodian
+                'LAOS': 'LO',          # Laos
+                'LAOSLU': 'LO',        # Laotian
+                'MALEZYA': 'MS',       # Malaysia
+                'MALEZYALI': 'MS',     # Malaysian
+                'SİNGAPUR': 'EN',      # Singapore
+                'SİNGAPURLU': 'EN',    # Singaporean
+                'ENDONEZYA': 'ID',     # Indonesia
+                'ENDONEZYALI': 'ID',   # Indonesian
+                'FİLİPİNLER': 'TL',    # Philippines
+                'FİLİPİNLİ': 'TL',     # Filipino
+                'BRUNEY': 'MS',        # Brunei
+                'BRUNEYLI': 'MS',      # Bruneian
+                'TİMOR': 'TL',         # Timor
+                'TİMORLU': 'TL',       # Timorese
+                'PAPUA YENİ GİNE': 'EN', # Papua New Guinea
+                'PAPUA YENİ GİNELİ': 'EN', # Papua New Guinean
+                'FİJİ': 'EN',          # Fiji
+                'FİJİLİ': 'EN',        # Fijian
+                'TONGA': 'TO',         # Tonga
+                'TONGALI': 'TO',       # Tongan
+                'SAMOA': 'SM',         # Samoa
+                'SAMOALI': 'SM',       # Samoan
+                'KİRİBATİ': 'EN',      # Kiribati
+                'KİRİBATİLİ': 'EN',    # Kiribati
+                'TUVALU': 'EN',        # Tuvalu
+                'TUVALU': 'EN',        # Tuvaluan
+                'VANUATU': 'BI',       # Vanuatu
+                'VANUATULU': 'BI',     # Vanuatuan
+                'SOLOMON ADALARI': 'EN', # Solomon Islands
+                'SOLOMON ADALARI': 'EN', # Solomon Islander
+                'PALAU': 'EN',         # Palau
+                'PALAULU': 'EN',       # Palauan
+                'MARŞAL ADALARI': 'EN', # Marshall Islands
+                'MARŞAL ADALARI': 'EN', # Marshallese
+                'MİKRONEZYA': 'EN',    # Micronesia
+                'MİKRONEZYALI': 'EN',  # Micronesian
+                'NAURU': 'NA',         # Nauru
+                'NAURULU': 'NA',       # Nauruan
+            }
+            
+            # Find matching country
+            for turkish_name, lang_code in turkish_country_map.items():
+                if turkish_name in country_part:
+                    return lang_code
+        
+        # Fallback to English for unknown foreign nationalities
+        return 'EN'
+
+    def translate_message_for_user(self, message, username, leads_data=None):
+        """Translate message for a specific user based on their nationality"""
+        try:
+            # If no leads data provided, get from storage
+            if leads_data is None:
+                leads_data = self.get_all_leads()
+            
+            # Find user's nationality from leads data
+            user_nationality = None
+            for lead in leads_data:
+                if lead.get('username', '').lower() == username.lower():
+                    user_nationality = lead.get('nationality', '')
+                    break
+            
+            if not user_nationality:
+                print(f"⚠️ No nationality data found for {username}, using original message")
+                return message
+            
+            # Get target language for this nationality
+            target_language = self.get_target_language_for_nationality(user_nationality)
+            
+            # If target language is Turkish, no translation needed
+            if target_language == 'TR':
+                print(f"🇹🇷 User {username} is Turkish, using original message")
+                return message
+            
+            # Translate for foreign users
+            print(f"🌍 User {username} nationality: {user_nationality} -> Language: {target_language}")
+            translated_message = self.translate_message_with_deepl(message, target_language)
+            
+            return translated_message
+            
+        except Exception as e:
+            print(f"❌ Error translating message for {username}: {str(e)}")
+            return message

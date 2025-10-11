@@ -85,7 +85,7 @@ const Users: React.FC = () => {
     {
       title: 'Actions',
       key: 'actions',
-      render: (_, record: UserData) => (
+      render: (text: any, record: UserData) => (
         <Space>
           <Button
             type="primary"

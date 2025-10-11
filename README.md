@@ -1,129 +1,224 @@
-# Instagram Scraper App
+# PhyixInsta - Instagram Scraper & Nationality Classification
 
-Modern Instagram scraping application with React frontend and FastAPI backend.
+A comprehensive web application for Instagram profile scraping, nationality classification, and automated messaging campaigns.
 
 ## 🚀 Features
 
-- **Instagram Profile Scraping**: Extract user profiles, posts, and engagement data
-- **Message Sending**: Send direct messages to Instagram users
-- **Analytics Dashboard**: Visualize user engagement and performance metrics
-- **User Management**: Manage scraped user data
-- **Modern UI**: Beautiful React interface with Ant Design components
+### Core Functionality
+- **Instagram Profile Scraping**: Automated extraction of profile data using Selenium and Apify API
+- **AI-Powered Nationality Classification**: Machine learning-based nationality detection (TÜRK/YABANCI)
+- **Multi-language Message Campaigns**: DeepL integration for automatic message translation
+- **Session Management**: Organized data storage with session-based categorization
+- **Real-time Analytics**: Dashboard with comprehensive statistics
 
-## 🏗️ Architecture
-
-- **Frontend**: React + TypeScript + Ant Design
-- **Backend**: FastAPI + Python
+### Technical Stack
+- **Backend**: FastAPI (Python)
+- **Frontend**: React 18 + TypeScript
 - **Database**: Supabase (PostgreSQL)
-- **Scraping**: Selenium + Apify
-- **Deployment**: Vercel
+- **AI/ML**: OpenRouter API for nationality classification
+- **Translation**: DeepL API for multi-language support
+- **Scraping**: Selenium WebDriver + Apify API
 
-## 📦 Installation
+## 🛠️ Installation
 
 ### Prerequisites
-- Node.js 16+
 - Python 3.9+
-- npm or yarn
+- Node.js 18+
+- Chrome/Chromium browser
+- Git
 
 ### Backend Setup
 ```bash
+# Clone the repository
+git clone https://github.com/vedatdemir14/phyixinsta.git
+cd phyixinsta
+
 # Install Python dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your credentials
+# Set environment variables
+export SUPABASE_URL="your_supabase_url"
+export SUPABASE_API_KEY="your_supabase_key"
+export APIFY_API_TOKEN="your_apify_token"
+export OPENROUTER_API_KEY="your_openrouter_key"
+export DEEPL_API_KEY="your_deepl_key"
 
-# Run the API server
+# Run the backend
 python api.py
-# or
-uvicorn api:app --reload
 ```
 
 ### Frontend Setup
 ```bash
-# Navigate to frontend directory
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start development server
 npm start
 ```
 
-## 🔧 Environment Variables
+## 📊 Database Schema
 
-Create a `.env` file in the root directory:
+### Leads Table
+```sql
+CREATE TABLE leads (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255),
+    followers_count INTEGER DEFAULT 0,
+    following_count INTEGER DEFAULT 0,
+    posts_count INTEGER DEFAULT 0,
+    is_verified BOOLEAN DEFAULT FALSE,
+    profile_pic_url TEXT,
+    nationality VARCHAR(255),
+    session_name VARCHAR(255),
+    scraped_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_updated TIMESTAMP DEFAULT NOW()
+);
+```
 
-```env
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
-APIFY_API_TOKEN=your_apify_token
-UNIPILE_API_KEY=your_unipile_key
-UNIPILE_BASE_URL=your_unipile_base_url
-POSTGRES_HOST=your_postgres_host
-POSTGRES_PORT=5432
-POSTGRES_DB=postgres
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your_postgres_password
+### Sessions Table
+```sql
+CREATE TABLE sessions (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(255) UNIQUE NOT NULL,
+    session_name VARCHAR(255) NOT NULL,
+    lead_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_updated TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Instagram Accounts Table
+```sql
+CREATE TABLE instagram_accounts (
+    id VARCHAR(255) PRIMARY KEY,
+    username VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255),
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_updated TIMESTAMP DEFAULT NOW()
+);
+```
+
+## 🔧 API Endpoints
+
+### Profile Scraping
+- `POST /campaigns/profile-scraping` - Scrape Instagram profiles
+- `POST /campaigns/location-scraping` - Location-based scraping
+
+### Nationality Classification
+- `POST /campaigns/nationality-classification` - Classify user nationalities
+- `POST /leads/update-nationality` - Update nationality data
+
+### Message Campaigns
+- `POST /campaigns/message-campaign` - Send message campaigns
+- `GET /message-templates` - Get message templates
+- `POST /message-templates` - Create new templates
+
+### Data Management
+- `GET /leads` - Get all leads
+- `GET /leads/sessions` - Get all sessions
+- `GET /instagram-accounts` - Get Instagram accounts
+
+## 🎯 Usage
+
+### 1. Profile Scraping
+1. Navigate to **Campaigns** → **Profile Scraping**
+2. Enter target usernames or use location scraping
+3. Configure scraping parameters
+4. Start the scraping process
+
+### 2. Nationality Classification
+1. Go to **Campaigns** → **Nationality Classification**
+2. Select scraped profiles
+3. Run AI-powered nationality analysis
+4. Review and edit results if needed
+
+### 3. Message Campaigns
+1. Access **Campaigns** → **Message Campaign**
+2. Create or select message templates
+3. Filter leads by nationality (Turkish/Foreign)
+4. Configure campaign settings
+5. Launch automated messaging
+
+## 🔒 Security Features
+
+- **Row Level Security (RLS)**: Supabase-based access control
+- **JWT Authentication**: Secure session management
+- **API Key Management**: Encrypted credential storage
+- **Input Validation**: Comprehensive data validation
+- **Rate Limiting**: Protection against API abuse
+
+## 📈 Performance Optimizations
+
+- **Async/Await**: Non-blocking operations
+- **Connection Pooling**: Efficient database connections
+- **Caching**: Redis-based caching system
+- **Batch Processing**: Bulk data operations
+- **Code Splitting**: Optimized frontend loading
+
+## 🧪 Testing
+
+### Backend Testing
+```bash
+# Run API tests
+pytest tests/
+
+# Run specific test modules
+pytest tests/test_api.py
+```
+
+### Frontend Testing
+```bash
+cd frontend
+npm test
 ```
 
 ## 🚀 Deployment
 
-### Vercel Deployment
-1. Push your code to GitHub
-2. Connect your repository to Vercel
-3. Set environment variables in Vercel dashboard
-4. Deploy!
+### VPS Deployment
+1. **Server Requirements**: Ubuntu 20.04+, 2GB RAM, 30GB SSD
+2. **Install Dependencies**: Python 3.9+, Node.js 18+, Chrome
+3. **Database Setup**: Configure Supabase connection
+4. **Nginx Configuration**: Reverse proxy setup
+5. **SSL Certificate**: Let's Encrypt integration
 
-### Manual Deployment
+### Docker Deployment
 ```bash
-# Build frontend
-cd frontend && npm run build
-
-# Deploy backend
-# Your preferred hosting service (Heroku, Railway, etc.)
+# Build and run with Docker Compose
+docker-compose up -d
 ```
 
-## 📱 Usage
+## 📝 Contributing
 
-1. **Dashboard**: View overall statistics and activity
-2. **Scraper**: Enter Instagram username to scrape profile data
-3. **Messages**: Send direct messages to Instagram users
-4. **Analytics**: Analyze user engagement and performance
-5. **Users**: Manage scraped user data
-
-## 🛠️ API Endpoints
-
-- `GET /` - Health check
-- `POST /scrape/profile` - Scrape Instagram profile
-- `POST /scrape/posts` - Scrape Instagram posts
-- `POST /send/message` - Send Instagram message
-- `GET /users` - Get all users
-- `GET /users/{username}` - Get specific user
-- `GET /analytics/{username}` - Get user analytics
-- `GET /dashboard/stats` - Get dashboard statistics
-
-## 🔒 Security
-
-- Environment variables for sensitive data
-- CORS configuration for frontend-backend communication
-- Input validation with Pydantic models
-- Error handling and logging
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## 📄 License
 
-This project is for educational purposes only. Please respect Instagram's Terms of Service and use responsibly.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🤝 Contributing
+## 👥 Authors
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+- **Vedat Demir** - *Initial work* - [vedatdemir14](https://github.com/vedatdemir14)
 
-## ⚠️ Disclaimer
+## 🙏 Acknowledgments
 
-This tool is for educational purposes only. Users are responsible for complying with Instagram's Terms of Service and applicable laws. The developers are not responsible for any misuse of this application.
+- Supabase for database services
+- DeepL for translation services
+- Apify for Instagram scraping
+- OpenRouter for AI classification
+- React and FastAPI communities
+
+## 📞 Support
+
+For support and questions:
+- Email: [your-email@domain.com]
+- GitHub Issues: [Create an issue](https://github.com/vedatdemir14/phyixinsta/issues)
+
+---
+
+**PhyixInsta** - Advanced Instagram Analytics & Automation Platform
