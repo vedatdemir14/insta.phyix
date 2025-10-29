@@ -29,12 +29,13 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# ==========================
-# Install Chrome for Testing + matching ChromeDriver
-# ==========================
 # Install Chrome for Testing + matching ChromeDriver (cross-arch safe)
 RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/* \
-    && ARCH=$(uname -m | sed 's/x86_64/linux64/;s/aarch64/linux-arm64/') \
+    && case "$TARGETARCH" in \
+        amd64) ARCH="linux64" ;; \
+        arm64) ARCH="linux-arm64" ;; \
+        *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
+    esac \
     && CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public" \
     && CHROME_VERSION=$(curl -sS https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
         | jq -r '.channels.Stable.version') \
@@ -47,6 +48,7 @@ RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/* \
     && mv /opt/chromedriver-${ARCH}/chromedriver /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver \
     && rm -rf /tmp/*.zip
+
 # Add Chrome to PATH
 ENV PATH="/opt/chrome:${PATH}"
 ENV CHROME_BIN="/opt/chrome/chrome"
