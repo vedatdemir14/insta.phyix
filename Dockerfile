@@ -58,14 +58,21 @@ RUN CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public" \
     && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/$(cat /tmp/arch.txt)/chromedriver-$(cat /tmp/arch.txt).zip" -o /tmp/chromedriver.zip
 
 # ==========================
-# Unzip and move binaries
+# Unzip binaries
 # ==========================
-RUN unzip /tmp/chrome.zip -d /opt/chrome-temp \
-    && unzip /tmp/chromedriver.zip -d /opt/chromedriver-temp \
-    && find /opt/chrome-temp -type f -name chrome -exec mv {} /opt/chrome \; \
-    && find /opt/chromedriver-temp -type f -name chromedriver -exec mv {} /usr/local/bin/ \; \
-    && chmod +x /usr/local/bin/chromedriver /opt/chrome \
-    && rm -rf /tmp/* /opt/chrome-temp /opt/chromedriver-temp
+RUN unzip /tmp/chrome.zip -d /opt/chrome-temp
+RUN unzip /tmp/chromedriver.zip -d /opt/chromedriver-temp
+
+# ==========================
+# Move binaries to final locations
+# ==========================
+RUN mv /opt/chrome-temp/*/chrome /opt/chrome && chmod +x /opt/chrome
+RUN mv /opt/chromedriver-temp/*/chromedriver /usr/local/bin/chromedriver && chmod +x /usr/local/bin/chromedriver
+
+# ==========================
+# Cleanup temp files
+# ==========================
+RUN rm -rf /tmp/* /opt/chrome-temp /opt/chromedriver-temp
 
 # ==========================
 # Copy requirements first for caching
