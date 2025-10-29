@@ -32,19 +32,21 @@ RUN apt-get update && apt-get install -y \
 # ==========================
 # Install Chrome for Testing + matching ChromeDriver
 # ==========================
-RUN CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public" \
+# Install Chrome for Testing + matching ChromeDriver (cross-arch safe)
+RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/* \
+    && ARCH=$(uname -m | sed 's/x86_64/linux64/;s/aarch64/linux-arm64/') \
+    && CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public" \
     && CHROME_VERSION=$(curl -sS https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
-        | grep -oP '(?<="Stable":{"version":")[^"]*') \
-    && echo "Installing Chrome ${CHROME_VERSION}" \
-    && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/linux64/chrome-linux64.zip" -o /tmp/chrome.zip \
-    && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" -o /tmp/chromedriver.zip \
+        | jq -r '.channels.Stable.version') \
+    && echo "Installing Chrome version ${CHROME_VERSION} for ${ARCH}" \
+    && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/${ARCH}/chrome-${ARCH}.zip" -o /tmp/chrome.zip \
+    && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/${ARCH}/chromedriver-${ARCH}.zip" -o /tmp/chromedriver.zip \
     && unzip /tmp/chrome.zip -d /opt/ \
     && unzip /tmp/chromedriver.zip -d /opt/ \
-    && mv /opt/chrome-linux64 /opt/chrome \
-    && mv /opt/chromedriver-linux64/chromedriver /usr/local/bin/ \
+    && mv /opt/chrome-${ARCH} /opt/chrome \
+    && mv /opt/chromedriver-${ARCH}/chromedriver /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver \
     && rm -rf /tmp/*.zip
-
 # Add Chrome to PATH
 ENV PATH="/opt/chrome:${PATH}"
 ENV CHROME_BIN="/opt/chrome/chrome"
