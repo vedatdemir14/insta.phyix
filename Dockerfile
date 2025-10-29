@@ -43,12 +43,12 @@ RUN apt-get update && apt-get install -y jq curl unzip \
     && echo "Installing Chrome version ${CHROME_VERSION} for ${ARCH}" \
     && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/${ARCH}/chrome-${ARCH}.zip" -o /tmp/chrome.zip \
     && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/${ARCH}/chromedriver-${ARCH}.zip" -o /tmp/chromedriver.zip \
-    && unzip /tmp/chrome.zip -d /opt/ \
-    && unzip /tmp/chromedriver.zip -d /opt/ \
-    && mv /opt/chrome-${ARCH}*/chrome /opt/chrome \
-    && mv /opt/chromedriver-${ARCH}*/chromedriver /usr/local/bin/ \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm -rf /tmp/*
+    && unzip /tmp/chrome.zip -d /opt/chrome-temp \
+    && unzip /tmp/chromedriver.zip -d /opt/chromedriver-temp \
+    && find /opt/chrome-temp -type f -name chrome -exec mv {} /opt/chrome \; \
+    && find /opt/chromedriver-temp -type f -name chromedriver -exec mv {} /usr/local/bin/chromedriver \; \
+    && chmod +x /usr/local/bin/chromedriver /opt/chrome \
+    && rm -rf /tmp/* /opt/chrome-temp /opt/chromedriver-temp
 # Add Chrome to PATH
 ENV PATH="/opt/chrome:${PATH}"
 ENV CHROME_BIN="/opt/chrome/chrome"
