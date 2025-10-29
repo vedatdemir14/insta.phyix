@@ -45,8 +45,8 @@ RUN apt-get update && apt-get install -y jq curl unzip \
     && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/${ARCH}/chromedriver-${ARCH}.zip" -o /tmp/chromedriver.zip \
     && unzip /tmp/chrome.zip -d /opt/ \
     && unzip /tmp/chromedriver.zip -d /opt/ \
-    && mv /opt/chrome-${ARCH} /opt/chrome \
-    && mv /opt/chromedriver-${ARCH}/chromedriver /usr/local/bin/ \
+    && mv /opt/chrome-${ARCH}*/chrome /opt/chrome \
+    && mv /opt/chromedriver-${ARCH}*/chromedriver /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver \
     && rm -rf /tmp/*
 # Add Chrome to PATH
