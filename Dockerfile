@@ -1,55 +1,84 @@
-# Python 3.11 slim base image
+# ==========================
+# Base Image
+# ==========================
 FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# ==========================
+# Install System Dependencies
+# ==========================
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     unzip \
     curl \
+    fonts-liberation \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libxkbcommon0 \
+    libgbm1 \
+    libasound2 \
+    libxshmfence1 \
+    libxrandr2 \
+    libxdamage1 \
+    libxcomposite1 \
+    libxfixes3 \
+    libpango-1.0-0 \
+    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Chrome
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install ChromeDriver (simplified)
-RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d'.' -f1-3) \
-    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}/chromedriver_linux64.zip" \
-    && unzip /tmp/chromedriver.zip -d /tmp/ \
-    && mv /tmp/chromedriver /usr/local/bin/chromedriver \
+# ==========================
+# Install Chrome for Testing + matching ChromeDriver
+# ==========================
+RUN CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public" \
+    && CHROME_VERSION=$(curl -sS https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
+        | grep -oP '(?<="Stable":{"version":")[^"]*') \
+    && echo "Installing Chrome ${CHROME_VERSION}" \
+    && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/linux64/chrome-linux64.zip" -o /tmp/chrome.zip \
+    && curl -sSL "${CHROME_URL}/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" -o /tmp/chromedriver.zip \
+    && unzip /tmp/chrome.zip -d /opt/ \
+    && unzip /tmp/chromedriver.zip -d /opt/ \
+    && mv /opt/chrome-linux64 /opt/chrome \
+    && mv /opt/chromedriver-linux64/chromedriver /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver \
-    && rm /tmp/chromedriver.zip
+    && rm -rf /tmp/*.zip
 
-# Copy requirements first for better caching
+# Add Chrome to PATH
+ENV PATH="/opt/chrome:${PATH}"
+ENV CHROME_BIN="/opt/chrome/chrome"
+
+# ==========================
+# Copy and Install Python Dependencies
+# ==========================
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers
+# ==========================
+# Install Playwright Chromium
+# ==========================
 RUN playwright install chromium
 
-# Copy application code
+# ==========================
+# Copy Application Code
+# ==========================
 COPY . .
 
-# Create non-root user
+# ==========================
+# Create Non-root User
+# ==========================
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Expose port
+# ==========================
+# Expose and Healthcheck
+# ==========================
 EXPOSE 5000
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/test || exit 1
 
-# Run the application
+# ==========================
+# Run the Flask App
+# ==========================
 CMD ["python", "api_güncel.py"]
-
