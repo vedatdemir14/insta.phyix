@@ -30,7 +30,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chrome for Testing + matching ChromeDriver (cross-arch safe)
-RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y jq curl unzip \
+    && rm -rf /var/lib/apt/lists/* \
     && case "$TARGETARCH" in \
         amd64) ARCH="linux64" ;; \
         arm64) ARCH="linux-arm64" ;; \
@@ -47,8 +48,7 @@ RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/* \
     && mv /opt/chrome-${ARCH} /opt/chrome \
     && mv /opt/chromedriver-${ARCH}/chromedriver /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver \
-    && rm -rf /tmp/*.zip
-
+    && rm -rf /tmp/*
 # Add Chrome to PATH
 ENV PATH="/opt/chrome:${PATH}"
 ENV CHROME_BIN="/opt/chrome/chrome"
