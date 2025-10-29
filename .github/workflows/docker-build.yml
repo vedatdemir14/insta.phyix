@@ -45,6 +45,7 @@ jobs:
           type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build and push Docker image
+      id: build   # 👈 burada id ekledik
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -59,5 +60,5 @@ jobs:
       uses: actions/attest-build-provenance@v1
       with:
         subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        subject-digest: ${{ steps.build.outputs.digest }}
+        subject-digest: ${{ steps.build.outputs.digest }}  # 👈 build step digest
         push-to-registry: true
