@@ -2,9 +2,11 @@ import axios from 'axios';
 
 // Vercel'de production'da /api proxy kullan, development'ta environment variable
 const getApiBaseUrl = () => {
-  if (process.env.NODE_ENV === 'production' && window.location.hostname.includes('vercel.app')) {
+  // Vercel'de her zaman /api proxy kullan (environment variable'ı ignore et)
+  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
     return '/api'; // Vercel proxy kullan
   }
+  // Local development için environment variable veya default
   return process.env.REACT_APP_API_URL || 'http://localhost:8000';
 };
 
