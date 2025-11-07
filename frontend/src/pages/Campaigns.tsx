@@ -514,8 +514,11 @@ const Campaigns: React.FC = () => {
 
     // Nationality editing functions
     const handleNationalityEdit = (record: any) => {
+      console.log('🔍 EDIT BUTTON CLICKED IN CAMPAIGNS!');
+      console.log('📊 Record:', record);
       setEditingNationality(record);
       setEditModalVisible(true);
+      console.log('🔍 Modal should be open now');
     };
 
     const handleNationalitySwap = async (record: any) => {
@@ -552,7 +555,12 @@ const Campaigns: React.FC = () => {
     };
 
     const handleEditSave = async (values: any) => {
+      console.log('🔍 HANDLE EDIT SAVE CALLED!');
+      console.log('📊 Values:', values);
+      console.log('📊 Editing nationality:', editingNationality);
+      
       try {
+        console.log('🔄 Updating nationality in Supabase...');
         await updateNationalityInSupabase(editingNationality.username, values.nationality);
         
         // Update local state
@@ -563,11 +571,12 @@ const Campaigns: React.FC = () => {
         );
         setNationalityResults(updatedResults);
         
+        console.log('✅ Nationality updated successfully');
         message.success(`Nationality updated to ${values.nationality} for @${editingNationality.username}`);
         setEditModalVisible(false);
         setEditingNationality(null);
       } catch (error) {
-        console.error('Error updating nationality:', error);
+        console.error('❌ Error updating nationality:', error);
         message.error('Failed to update nationality');
       }
     };
@@ -829,12 +838,17 @@ const Campaigns: React.FC = () => {
               key="save" 
               type="primary" 
               onClick={() => {
-                const form = document.querySelector('[data-nationality-form]') as any;
-                if (form) {
-                  const nationality = form.querySelector('input[name="nationality"]')?.value;
-                  if (nationality) {
-                    handleEditSave({ nationality });
-                  }
+                console.log('🔍 SAVE BUTTON CLICKED IN CAMPAIGNS!');
+                console.log('📊 Editing nationality:', editingNationality);
+                
+                // Get nationality from input field
+                const nationalityInput = document.querySelector('input[name="nationality"]') as HTMLInputElement;
+                if (nationalityInput) {
+                  const nationality = nationalityInput.value;
+                  console.log('📊 Nationality from input:', nationality);
+                  handleEditSave({ nationality });
+                } else {
+                  console.log('❌ Nationality input not found!');
                 }
               }}
             >
@@ -938,15 +952,32 @@ const Campaigns: React.FC = () => {
     };
 
     const handleTemplateSelect = (template: any) => {
+      console.log('🔍 TEMPLATE SELECTED!');
+      console.log('📊 Template:', template);
       setSelectedTemplate(template);
       form.setFieldsValue({
         template_name: template.name,
         message_content: template.content
       });
+      console.log('🔍 Form filled with selected template');
     };
 
     const handleEdit = () => {
+      console.log('🔍 EDIT TEMPLATE CLICKED!');
+      console.log('📊 Selected template:', selectedTemplate);
       setIsEditing(true);
+      
+      // Fill form with selected template data
+      if (selectedTemplate) {
+        console.log('🔍 Filling form with:', selectedTemplate.name, selectedTemplate.content);
+        form.setFieldsValue({
+          template_name: selectedTemplate.name,
+          message_content: selectedTemplate.content
+        });
+        console.log('🔍 Form filled with template data');
+      } else {
+        console.log('❌ No selected template!');
+      }
     };
 
     const handleDelete = (templateId: string) => {
@@ -1029,7 +1060,11 @@ const Campaigns: React.FC = () => {
                     cursor: 'pointer',
                     border: selectedTemplate?.id === template.id ? '2px solid #1890ff' : '1px solid #d9d9d9'
                   }}
-                  onClick={() => handleTemplateSelect(template)}
+                  onClick={() => {
+                    console.log('🔍 TEMPLATE CARD CLICKED!');
+                    console.log('📊 Template:', template);
+                    handleTemplateSelect(template);
+                  }}
                   actions={[
                     <Button 
                       type="link" 

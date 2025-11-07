@@ -15,7 +15,8 @@ import {
   Modal,
   Descriptions,
   Avatar,
-  Divider
+  Divider,
+  Form
 } from 'antd';
 import { 
   UserOutlined, 
@@ -29,7 +30,7 @@ import {
   HeartOutlined,
   MessageOutlined
 } from '@ant-design/icons';
-import api from '../services/api';
+import api, { apiService } from '../services/api';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -39,6 +40,7 @@ interface Lead {
   username: string;
   full_name: string;
   bio: string;
+  biography: string;  // Add biography field
   followers_count: number;
   following_count: number;
   posts_count: number;
@@ -48,6 +50,8 @@ interface Lead {
   confidence: number;
   session_name: string;
   scraped_at: string;
+  created_at?: string;  // Add created_at field
+  last_updated?: string;  // Add last_updated field
 }
 
 interface Session {
@@ -68,6 +72,18 @@ const Leads: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editNationalityModal, setEditNationalityModal] = useState(false);
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [newNationality, setNewNationality] = useState('');
+  const [form] = Form.useForm();
+  const [tableKey, setTableKey] = useState(0); // Force re-render key
+
+  // Debug modal state
+  useEffect(() => {
+    if (editNationalityModal && editingLead) {
+      console.log('🔍 Modal opened for:', editingLead.username);
+    }
+  }, [editNationalityModal, editingLead]);
 
   // Fetch leads and sessions from API
   useEffect(() => {
@@ -82,9 +98,17 @@ const Leads: React.FC = () => {
         if (leadsResponse.data.success) {
           console.log('✅ Leads data received:', leadsResponse.data.data);
           console.log('📊 Leads count:', leadsResponse.data.data.length);
-          setLeads(leadsResponse.data.data);
-          setFilteredLeads(leadsResponse.data.data);
-          console.log('🔄 State updated - leads:', leadsResponse.data.data);
+          
+          // Sort leads by creation date (newest first)
+          const sortedLeads = leadsResponse.data.data.sort((a: Lead, b: Lead) => {
+            const dateA = new Date(a.created_at || a.scraped_at || 0);
+            const dateB = new Date(b.created_at || b.scraped_at || 0);
+            return dateB.getTime() - dateA.getTime(); // Newest first
+          });
+          
+          setLeads(sortedLeads);
+          setFilteredLeads(sortedLeads);
+          console.log('🔄 State updated - leads:', sortedLeads);
         } else {
           console.log('❌ Leads response not successful:', leadsResponse.data);
         }
@@ -116,21 +140,37 @@ const Leads: React.FC = () => {
     console.log('📊 Available sessions:', sessions);
     setSelectedSession(sessionId);
     if (sessionId === 'all') {
-      setFilteredLeads(leads);
+      // Sort all leads by creation date (newest first)
+      const sortedLeads = [...leads].sort((a, b) => {
+        const dateA = new Date(a.created_at || a.scraped_at || 0);
+        const dateB = new Date(b.created_at || b.scraped_at || 0);
+        return dateB.getTime() - dateA.getTime(); // Newest first
+      });
+      setFilteredLeads(sortedLeads);
     } else {
-      const session = sessions.find(s => s.id === sessionId);
+      // Find session by index or name
+      const sessionIndex = parseInt(sessionId);
+      const session = sessions[sessionIndex];
       console.log('🔍 Found session:', session);
       if (session) {
         const sessionName = session.name || session.session_name;
         console.log('🔍 Looking for session name:', sessionName);
-        const filtered = leads.filter(lead => {
+        let filtered = leads.filter(lead => {
           console.log('🔍 Lead session name:', lead.session_name, 'vs', sessionName);
           return lead.session_name === sessionName;
         });
+        
+        // Sort filtered leads by creation date (newest first)
+        filtered.sort((a, b) => {
+          const dateA = new Date(a.created_at || a.scraped_at || 0);
+          const dateB = new Date(b.created_at || b.scraped_at || 0);
+          return dateB.getTime() - dateA.getTime(); // Newest first
+        });
+        
         console.log('📊 Filtered leads count:', filtered.length);
         setFilteredLeads(filtered);
       } else {
-        console.log('❌ Session not found for ID:', sessionId);
+        console.log('❌ Session not found for index:', sessionId);
         setFilteredLeads(leads);
       }
     }
@@ -138,11 +178,20 @@ const Leads: React.FC = () => {
 
   const handleSearch = (value: string) => {
     setSearchTerm(value);
-    const filtered = leads.filter(lead => 
+    let filtered = leads.filter(lead => 
       lead.username.toLowerCase().includes(value.toLowerCase()) ||
       lead.full_name.toLowerCase().includes(value.toLowerCase()) ||
-      lead.bio.toLowerCase().includes(value.toLowerCase())
+      (lead.bio && lead.bio.toLowerCase().includes(value.toLowerCase())) ||
+      (lead.biography && lead.biography.toLowerCase().includes(value.toLowerCase()))
     );
+    
+    // Sort by creation date (newest first)
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.created_at || a.scraped_at || 0);
+      const dateB = new Date(b.created_at || b.scraped_at || 0);
+      return dateB.getTime() - dateA.getTime(); // Newest first
+    });
+    
     setFilteredLeads(filtered);
   };
 
@@ -157,6 +206,93 @@ const Leads: React.FC = () => {
 
   const handleExportLeads = () => {
     message.success('Leads exported successfully!');
+  };
+
+  const handleMergeData = async () => {
+    try {
+      setLoading(true);
+      const response = await api.post('/leads/merge-data');
+      
+      if (response.data.success) {
+        message.success(`Data merge completed! ${response.data.leads_count} leads, ${response.data.sessions_count} sessions`);
+        
+        // Refresh the data
+        const leadsResponse = await api.get('/leads');
+        if (leadsResponse.data.success) {
+          setLeads(leadsResponse.data.data);
+          setFilteredLeads(leadsResponse.data.data);
+        }
+        
+        const sessionsResponse = await api.get('/leads/sessions');
+        if (sessionsResponse.data.success) {
+          setSessions(sessionsResponse.data.data);
+        }
+      } else {
+        message.error('Failed to merge data');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || 'Failed to merge data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditNationality = (lead: Lead) => {
+    console.log('🔍 Edit nationality clicked for:', lead.username);
+    setEditingLead(lead);
+    setNewNationality(lead.nationality);
+    setEditNationalityModal(true);
+    console.log('🔍 Modal should be open now');
+  };
+
+  const handleSaveNationality = async () => {
+    console.log('🔍 Save nationality clicked');
+    console.log('📊 editingLead:', editingLead);
+    console.log('📊 newNationality:', newNationality);
+    
+    if (!editingLead || !newNationality.trim()) {
+      message.error('Please enter a nationality');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      console.log('🔄 Calling updateNationality API...');
+      const result = await apiService.updateNationality(editingLead.username, newNationality);
+      console.log('✅ API response:', result);
+      
+      // Update the lead in local state
+      const updatedLeads = leads.map(lead => 
+        lead.username === editingLead.username 
+          ? { ...lead, nationality: newNationality, last_updated: new Date().toISOString() }
+          : lead
+      );
+      setLeads(updatedLeads);
+      
+      // Also update filteredLeads
+      const updatedFilteredLeads = filteredLeads.map(lead => 
+        lead.username === editingLead.username 
+          ? { ...lead, nationality: newNationality, last_updated: new Date().toISOString() }
+          : lead
+      );
+      setFilteredLeads(updatedFilteredLeads);
+      
+      console.log('✅ Updated leads:', updatedLeads.length);
+      console.log('✅ Updated filtered leads:', updatedFilteredLeads.length);
+      
+      message.success(`Nationality updated to ${newNationality} for @${editingLead.username}`);
+      setEditNationalityModal(false);
+      setEditingLead(null);
+      setNewNationality('');
+      
+      // Force table re-render
+      setTableKey(prev => prev + 1);
+    } catch (error: any) {
+      console.error('❌ Error updating nationality:', error);
+      message.error(error.response?.data?.detail || 'Failed to update nationality');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const columns = [
@@ -198,11 +334,24 @@ const Leads: React.FC = () => {
       title: 'Nationality',
       dataIndex: 'nationality',
       key: 'nationality',
-      width: 120,
+      width: 150,
       render: (nationality: string, record: Lead) => (
-        <Tag color={nationality.includes('TÜRK') ? 'green' : 'blue'}>
-          {nationality}
-        </Tag>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Tag color={nationality.includes('TÜRK') ? 'green' : 'blue'}>
+            {nationality}
+          </Tag>
+          <Button 
+            type="link" 
+            size="small"
+            icon={<EditOutlined />} 
+            onClick={() => {
+              console.log('🔍 EDIT BUTTON CLICKED!');
+              console.log('📊 Record:', record);
+              handleEditNationality(record);
+            }}
+            style={{ padding: '0 4px' }}
+          />
+        </div>
       ),
     },
     {
@@ -320,7 +469,7 @@ const Leads: React.FC = () => {
               {sessions.map((session, index) => {
                 console.log(`📋 Session ${index}:`, session);
                 return (
-                  <Option key={session.id || index} value={session.id || index}>
+                  <Option key={index} value={index.toString()}>
                     {session.name || session.session_name || `Session ${index}`} ({session.lead_count || 0})
                   </Option>
                 );
@@ -345,6 +494,14 @@ const Leads: React.FC = () => {
               >
                 Export Leads
               </Button>
+              <Button 
+                type="default" 
+                icon={<FlagOutlined />}
+                onClick={handleMergeData}
+                loading={loading}
+              >
+                Merge Data
+              </Button>
             </Space>
           </Col>
         </Row>
@@ -353,6 +510,7 @@ const Leads: React.FC = () => {
       {/* Leads Table */}
       <Card>
         <Table
+          key={tableKey}
           columns={columns}
           dataSource={filteredLeads}
           rowKey="id"
@@ -407,7 +565,7 @@ const Leads: React.FC = () => {
 
             <Descriptions column={1} bordered>
               <Descriptions.Item label="Bio">
-                {selectedLead.bio || 'No bio available'}
+                {selectedLead.bio || selectedLead.biography || 'No bio available'}
               </Descriptions.Item>
               <Descriptions.Item label="Followers">
                 {selectedLead.followers_count.toLocaleString()}
@@ -440,6 +598,68 @@ const Leads: React.FC = () => {
                 {new Date(selectedLead.scraped_at).toLocaleString()}
               </Descriptions.Item>
             </Descriptions>
+          </div>
+        )}
+      </Modal>
+
+      {/* Edit Nationality Modal */}
+      <Modal
+        title={`Edit Nationality - @${editingLead?.username}`}
+        open={editNationalityModal}
+        onCancel={() => {
+          console.log('🔍 Modal cancelled');
+          setEditNationalityModal(false);
+          setEditingLead(null);
+          setNewNationality('');
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setEditNationalityModal(false);
+            setEditingLead(null);
+            setNewNationality('');
+          }}>
+            Cancel
+          </Button>,
+          <Button 
+            key="save" 
+            type="primary" 
+            loading={loading}
+            onClick={() => {
+              console.log('🔍 Save button clicked!');
+              handleSaveNationality();
+            }}
+          >
+            Save
+          </Button>
+        ]}
+        width={500}
+      >
+        {editingLead && (
+          <div>
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>Current Nationality:</Text>
+              <div style={{ marginTop: 8 }}>
+                <Tag color={editingLead.nationality.includes('TÜRK') ? 'green' : 'blue'}>
+                  {editingLead.nationality}
+                </Tag>
+              </div>
+            </div>
+            
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>Bio:</Text>
+              <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4 }}>
+                <Text>{editingLead.bio || editingLead.biography || 'No bio available'}</Text>
+              </div>
+            </div>
+
+            <Form.Item label="New Nationality:">
+              <Input
+                value={newNationality}
+                onChange={(e) => setNewNationality(e.target.value)}
+                placeholder="Enter new nationality"
+                size="large"
+              />
+            </Form.Item>
           </div>
         )}
       </Modal>

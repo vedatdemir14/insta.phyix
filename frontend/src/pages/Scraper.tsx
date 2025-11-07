@@ -89,6 +89,17 @@ const Scraper: React.FC = () => {
                 <Switch />
               </Form.Item>
 
+              <Form.Item
+                label="Session Name"
+                name="session_name"
+                rules={[{ required: true, message: 'Please enter session name!' }]}
+              >
+                <Input
+                  placeholder="Enter session name (e.g., Location Scraping - Istanbul)"
+                  size="large"
+                />
+              </Form.Item>
+
               <Form.Item>
                 <Button
                   type="primary"
@@ -207,6 +218,7 @@ const Scraper: React.FC = () => {
 };
 
 export default Scraper;
+
 
 
 

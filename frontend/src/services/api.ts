@@ -36,6 +36,7 @@ export interface ScrapeRequest {
   username: string;
   max_posts?: number;
   include_stories?: boolean;
+  session_name?: string;
 }
 
 export interface MessageRequest {
@@ -121,6 +122,25 @@ export const apiService = {
 
   nationalityClassification: async (data: any) => {
     const response = await api.post('/campaigns/nationality-classification', data);
+    return response.data;
+  },
+
+  // Leads endpoints
+  getLeads: async () => {
+    const response = await api.get('/leads');
+    return response.data;
+  },
+
+  getSessions: async () => {
+    const response = await api.get('/leads/sessions');
+    return response.data;
+  },
+
+  updateNationality: async (username: string, nationality: string) => {
+    const response = await api.post('/leads/update-nationality', {
+      username,
+      nationality
+    });
     return response.data;
   },
 };
