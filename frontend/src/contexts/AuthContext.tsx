@@ -21,7 +21,15 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// Vercel'de production'da /api proxy kullan, development'ta environment variable
+const getApiBaseUrl = () => {
+  if (process.env.NODE_ENV === 'production' && window.location.hostname.includes('vercel.app')) {
+    return '/api'; // Vercel proxy kullan
+  }
+  return process.env.REACT_APP_API_URL || 'http://localhost:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Configure axios defaults
 axios.defaults.baseURL = API_BASE_URL;
