@@ -21,11 +21,11 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Vercel'de production'da /api proxy kullan, development'ta environment variable
+// Vercel'de HTTPS backend URL kullan (Mixed Content hatası için)
 const getApiBaseUrl = () => {
-  // Vercel'de her zaman /api proxy kullan (environment variable'ı ignore et)
+  // Vercel'de HTTPS backend URL kullan
   if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
-    return '/api'; // Vercel proxy kullan
+    return 'https://2.59.119.90'; // HTTPS backend URL (Nginx reverse proxy)
   }
   // Local development için environment variable veya default
   return process.env.REACT_APP_API_URL || 'http://localhost:8000';
