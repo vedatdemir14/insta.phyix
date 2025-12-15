@@ -2,9 +2,9 @@ import axios from 'axios';
 
 // Vercel'de HTTPS backend URL kullan (Mixed Content hatası için)
 const getApiBaseUrl = (): string => {
-  // Vercel'de HTTPS backend URL kullan
+  // Vercel'de proxy kullan (SSL sertifika sorunu için)
   if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
-    return 'https://2.59.119.90'; // HTTPS backend URL (Nginx reverse proxy)
+    return '/api'; // Vercel proxy kullan (vercel.json'daki rewrite rule)
   }
   // Local development için environment variable veya default
   const envUrl = (process as any).env?.REACT_APP_API_URL;
