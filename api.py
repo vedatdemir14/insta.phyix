@@ -17,26 +17,29 @@ app = FastAPI(title="Instagram Scraper API", version="1.0.0")
 # CORS middleware for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "https://your-frontend-domain.vercel.app",
-        "https://*.vercel.app"  # Vercel subdomain'leri için
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],  # Tüm origin'lere izin (Nginx'te CORS header'ları yok)
+    allow_credentials=False,  # "*" ile credentials kullanılamaz
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Initialize backend with Supabase config
+# Use environment variables if available (for Docker), otherwise use defaults
+import os
 config = {
-    'SUPABASE_URL': 'https://rltkqtlinpsueyaervdv.supabase.co',
-    'SUPABASE_API_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsdGtxdGxpbnBzdWV5YWVydmR2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NzU3NTk4NSwiZXhwIjoyMDczMTUxOTg1fQ.doT1nxL0izQRpCqzAY-StRFrzqRRuRyiKhZDwKfk_fI',
-    'APIFY_API_TOKEN': 'apify_api_VeivXy54nUuP7jP3zdPStvnY1bdy6P12ohvn',
-    'OPENROUTER_API_KEY': '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',
-    'UNIPILE_API_KEY': 'k8IpFvnp.1H5f5alAgW2gK5M+J4GvW2M1lavbPHdsZfUGXBbEF+U=',
-    'UNIPILE_BASE_URL': 'https://api21.unipile.com:15121',
-    'DEEPL_API_KEY': '721f4e0a-7600-425a-9bd4-7c4282e7770c:fx'
+    'SUPABASE_URL': os.getenv('SUPABASE_URL', 'https://rltkqtlinpsueyaervdv.supabase.co'),
+    'SUPABASE_API_KEY': os.getenv('SUPABASE_API_KEY') or os.getenv('SUPABASE_KEY') or 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsdGtxdGxpbnBzdWV5YWVydmR2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NzU3NTk4NSwiZXhwIjoyMDczMTUxOTg1fQ.doT1nxL0izQRpCqzAY-StRFrzqRRuRyiKhZDwKfk_fI',
+    'APIFY_API_TOKEN': os.getenv('APIFY_API_TOKEN', 'apify_api_VeivXy54nUuP7jP3zdPStvnY1bdy6P12ohvn'),
+    'OPENROUTER_API_KEY': os.getenv('OPENROUTER_API_KEY', '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'),
+    'UNIPILE_API_KEY': os.getenv('UNIPILE_API_KEY', 'k8IpFvnp.1H5f5alAgW2gK5M+J4GvW2M1lavbPHdsZfUGXBbEF+U='),
+    'UNIPILE_BASE_URL': os.getenv('UNIPILE_BASE_URL', 'https://api21.unipile.com:15121'),
+    'DEEPL_API_KEY': os.getenv('DEEPL_API_KEY', '721f4e0a-7600-425a-9bd4-7c4282e7770c:fx')
 }
+
+# Log config status for debugging
+print(f"🔍 Config loaded - SUPABASE_URL: {config['SUPABASE_URL'][:30]}...")
+print(f"🔍 SUPABASE_API_KEY set: {'Yes' if config['SUPABASE_API_KEY'] else 'No'}")
+
 backend = InstagramBackend(config)
 # Instagram accounts will be loaded from Supabase in backend.__init__
 
@@ -45,6 +48,7 @@ class ScrapeRequest(BaseModel):
     username: str
     max_posts: Optional[int] = 10
     include_stories: Optional[bool] = False
+    session_name: Optional[str] = None
 
 class MessageRequest(BaseModel):
     username: str
@@ -72,6 +76,9 @@ class LocationScrapingRequest(BaseModel):
     ig_user: str
     ig_pass: str
     max_profiles: Optional[int] = 20
+    use_warp: Optional[bool] = False  # Cloudflare WARP kullanımı
+    user_ip: Optional[str] = None  # Kullanıcı IP'si (log için)
+    user_proxy: Optional[str] = None  # Kullanıcı SOCKS5 proxy (örn: "socks5://KULLANICI_IP:1080")
 
 class NationalityClassificationRequest(BaseModel):
     usernames: List[str]
@@ -103,7 +110,8 @@ async def scrape_profile(request: ScrapeRequest):
         result = backend.scrape_instagram_profile(
             username=request.username,
             max_posts=request.max_posts,
-            include_stories=request.include_stories
+            include_stories=request.include_stories,
+            session_name=request.session_name
         )
         return {"success": True, "data": result}
     except Exception as e:
@@ -189,13 +197,20 @@ async def location_scraping(request: LocationScrapingRequest):
         print(f"🔍 Starting REAL location scraping for: {request.locations}")
         print(f"👤 Using Instagram account: {request.ig_user}")
         print(f"📊 Max profiles: {request.max_profiles}")
+        print(f"🌐 Use WARP: {request.use_warp}")
+        if request.user_ip:
+            print(f"👤 User IP: {request.user_ip}")
+        if request.user_proxy:
+            print(f"🌐 User Proxy: {request.user_proxy}")
         
         # Real scraping
         result = backend.selenium_location_scraper(
             request.ig_user,
             request.ig_pass,
             request.locations,
-            request.max_profiles
+            request.max_profiles,
+            use_warp=request.use_warp,
+            user_proxy=request.user_proxy
         )
         
         print(f"✅ Scraping completed! Result type: {type(result)}")
@@ -205,8 +220,20 @@ async def location_scraping(request: LocationScrapingRequest):
         return {"success": True, "data": {"usernames": result}}
         
     except Exception as e:
-        print(f"❌ Scraping error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_detail = str(e)
+        error_traceback = traceback.format_exc()
+        print(f"❌ Scraping error: {error_detail}")
+        print(f"❌ Full traceback: {error_traceback}")
+        # Return detailed error to frontend
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "error": error_detail,
+                "traceback": error_traceback,
+                "type": type(e).__name__
+            }
+        )
 
 @app.post("/campaigns/nationality-classification")
 async def nationality_classification(request: NationalityClassificationRequest):
@@ -518,6 +545,28 @@ async def update_nationality(request: dict):
         return {"success": True, "message": f"Nationality updated to {nationality} for {username}"}
     except Exception as e:
         print(f"❌ Error updating nationality: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/leads/merge-data")
+async def merge_profile_and_nationality_data():
+    """Manually merge data from instagram_profiles and nationality_classifications into leads"""
+    try:
+        print("🔄 Starting manual data merge...")
+        
+        # Call the backend merge function
+        backend._merge_profile_and_nationality_data()
+        
+        # Reload data from Supabase
+        backend._load_data_from_supabase()
+        
+        return {
+            "success": True, 
+            "message": "Data merge completed successfully",
+            "leads_count": len(backend.leads_storage),
+            "sessions_count": len(backend.sessions_storage)
+        }
+    except Exception as e:
+        print(f"❌ Error merging data: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Global templates storage

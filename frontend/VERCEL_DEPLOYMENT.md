@@ -24,7 +24,9 @@ git push origin main
 1. [Vercel Dashboard](https://vercel.com/dashboard) sayfasına gidin
 2. "Add New Project" butonuna tıklayın
 3. GitHub repository'nizi seçin
-4. Root directory olarak `frontend` klasörünü seçin
+4. **ÖNEMLİ:** Root directory olarak `frontend` klasörünü seçin
+   - **Root Directory:** `frontend` yazın
+   - Framework Preset otomatik olarak "Create React App" olarak algılanmalı
 
 ### 3. Build Ayarları
 
@@ -39,7 +41,7 @@ Vercel otomatik olarak şu ayarları algılayacak:
 Vercel Dashboard'da projenizin **Settings > Environment Variables** bölümüne gidin ve şu değişkeni ekleyin:
 
 ```
-REACT_APP_API_URL = http://37.140.242.29:8000
+REACT_APP_API_URL = http://2.59.119.90:8000
 ```
 
 **Önemli:** 
@@ -96,7 +98,7 @@ Backend URL'inizi değiştirmek isterseniz:
 
 ### API Bağlantı Hatası
 
-- Backend'in çalıştığından emin olun: `curl http://37.140.242.29:8000/health`
+- Backend'in çalıştığından emin olun: `curl http://2.59.119.90:8000/health`
 - CORS ayarlarını kontrol edin
 - Environment variable'ın doğru ayarlandığından emin olun
 
@@ -125,4 +127,5 @@ Sorun yaşarsanız:
 1. Vercel build loglarını kontrol edin
 2. Browser console'da hataları kontrol edin
 3. Network tab'da API isteklerini kontrol edin
+
 

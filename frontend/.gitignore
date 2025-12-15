@@ -21,3 +21,6 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Lock files - Vercel uses Yarn, so ignore package-lock.json
+package-lock.json

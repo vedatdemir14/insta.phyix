@@ -1,5 +1,6 @@
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import axios from 'axios';
+import axios, { AxiosInstance } from 'axios';
 
 interface User {
   id: string;
@@ -22,19 +23,25 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Vercel'de HTTPS backend URL kullan (Mixed Content hatası için)
-const getApiBaseUrl = () => {
+const getApiBaseUrl = (): string => {
   // Vercel'de HTTPS backend URL kullan
   if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
     return 'https://2.59.119.90'; // HTTPS backend URL (Nginx reverse proxy)
   }
   // Local development için environment variable veya default
-  return process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  const envUrl = (process as any).env?.REACT_APP_API_URL;
+  return envUrl || 'http://localhost:8000';
 };
 
 const API_BASE_URL = getApiBaseUrl();
 
-// Configure axios defaults
-axios.defaults.baseURL = API_BASE_URL;
+// Create axios instance for auth
+const authApi: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -46,7 +53,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const storedToken = localStorage.getItem('token');
     if (storedToken) {
       setToken(storedToken);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+      authApi.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
       // Verify token and get user info
       verifyToken(storedToken);
     } else {
@@ -56,7 +63,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const verifyToken = async (token: string) => {
     try {
-      const response = await axios.get('/auth/me');
+      const response = await authApi.get('/auth/me');
       setUser(response.data);
       setLoading(false);
     } catch (error) {
@@ -64,7 +71,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       localStorage.removeItem('token');
       setToken(null);
       setUser(null);
-      delete axios.defaults.headers.common['Authorization'];
+      delete authApi.defaults.headers.common['Authorization'];
       setLoading(false);
     }
   };
@@ -72,7 +79,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const login = async (username: string, password: string) => {
     try {
       setLoading(true);
-      const response = await axios.post('/auth/login', {
+      const response = await authApi.post('/auth/login', {
         username,
         password
       });
@@ -85,7 +92,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(userData);
       
       // Set axios default header
-      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      authApi.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
       
       setLoading(false);
     } catch (error: any) {
@@ -97,7 +104,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const register = async (username: string, email: string, password: string, fullName?: string) => {
     try {
       setLoading(true);
-      const response = await axios.post('/auth/register', {
+      const response = await authApi.post('/auth/register', {
         username,
         email,
         password,
@@ -112,7 +119,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(userData);
       
       // Set axios default header
-      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      authApi.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
       
       setLoading(false);
     } catch (error: any) {
@@ -125,7 +132,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.removeItem('token');
     setToken(null);
     setUser(null);
-    delete axios.defaults.headers.common['Authorization'];
+    delete authApi.defaults.headers.common['Authorization'];
   };
 
   const value: AuthContextType = {

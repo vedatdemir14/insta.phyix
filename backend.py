@@ -84,7 +84,7 @@ class InstagramBackend:
         if config is None:
             config = {
                 'SUPABASE_URL': os.getenv('SUPABASE_URL'),
-                'SUPABASE_KEY': os.getenv('SUPABASE_KEY'),
+                'SUPABASE_API_KEY': os.getenv('SUPABASE_API_KEY') or os.getenv('SUPABASE_KEY'),  # Support both names
                 'APIFY_API_TOKEN': os.getenv('APIFY_API_TOKEN'),
                 'UNIPILE_API_KEY': os.getenv('UNIPILE_API_KEY', 'k8IpFvnp.1H5f5alAgW2gK5M+J4GvW2M1lavbPHdsZfUGXBbEF+U='),
                 'UNIPILE_BASE_URL': os.getenv('UNIPILE_BASE_URL', 'https://api21.unipile.com:15121'),
@@ -127,16 +127,48 @@ class InstagramBackend:
         # Try Supabase connection first
         if SUPABASE_AVAILABLE and self.config.get('SUPABASE_URL') and self.config.get('SUPABASE_API_KEY'):
             try:
+                supabase_url = self.config['SUPABASE_URL']
+                print(f"🔍 Connecting to Supabase: {supabase_url}")
+                
+                # Test DNS resolution first
+                try:
+                    import socket
+                    from urllib.parse import urlparse
+                    parsed = urlparse(supabase_url)
+                    hostname = parsed.hostname
+                    if hostname:
+                        print(f"🔍 Testing DNS resolution for Supabase hostname: {hostname}")
+                        ip_address = socket.gethostbyname(hostname)
+                        print(f"✅ DNS resolution successful: {hostname} -> {ip_address}")
+                except socket.gaierror as dns_error:
+                    print(f"❌ DNS resolution failed for Supabase: {dns_error}")
+                    print(f"⚠️ Cannot resolve Supabase hostname. Check your internet connection and DNS settings.")
+                    self.supabase_connected = False
+                    return
+                except Exception as dns_check_error:
+                    print(f"⚠️ DNS check warning: {dns_check_error}")
+                
                 self.supabase = create_client(
-                    self.config['SUPABASE_URL'], 
+                    supabase_url, 
                     self.config['SUPABASE_API_KEY']
                 )
+                print("✅ Supabase client created")
+                
                 # Test connection
+                print("🔍 Testing Supabase connection...")
                 self.supabase.table("scraping_sessions").select("id").limit(1).execute()
                 self.supabase_connected = True
                 print("✅ Supabase connected successfully")
+            except socket.gaierror as dns_error:
+                print(f"❌ DNS error during Supabase connection: {dns_error}")
+                print(f"⚠️ Cannot resolve Supabase hostname. Check your internet connection.")
+                self.supabase_connected = False
             except Exception as e:
-                print(f"⚠️ Supabase connection failed: {e}")
+                error_msg = str(e)
+                print(f"⚠️ Supabase connection failed: {error_msg}")
+                print(f"⚠️ Error type: {type(e).__name__}")
+                if "name or service not known" in error_msg.lower():
+                    print("⚠️ This appears to be a DNS resolution issue.")
                 self.supabase_connected = False
         
         # Try PostgreSQL connection (optional - Supabase is primary)
@@ -403,6 +435,9 @@ class InstagramBackend:
         try:
             print("🔄 Loading existing data from Supabase...")
             
+            # First, try to merge data from instagram_profiles and nationality_classifications
+            self._merge_profile_and_nationality_data()
+            
             # Load leads from Supabase
             leads_result = self.supabase.table("leads").select("*").execute()
             if leads_result.data:
@@ -430,6 +465,109 @@ class InstagramBackend:
         except Exception as e:
             print(f"⚠️ Warning: Could not load data from Supabase: {e}")
             print("📝 Starting with empty storage")
+    
+    def _merge_profile_and_nationality_data(self):
+        """Move data from instagram_profiles table directly to leads table"""
+        if not self.supabase_connected:
+            return
+        
+        try:
+            print("🔄 Moving profile data directly to leads table...")
+            
+            # Check if instagram_profiles table exists and has data
+            try:
+                profiles_result = self.supabase.table("instagram_profiles").select("*").limit(1).execute()
+                if not profiles_result.data:
+                    print("📝 No instagram_profiles data found, skipping merge")
+                    return
+            except Exception:
+                print("📝 instagram_profiles table not found, skipping merge")
+                return
+            
+            # Get all profiles
+            profiles_result = self.supabase.table("instagram_profiles").select("*").execute()
+            profiles = profiles_result.data if profiles_result.data else []
+            
+            print(f"📊 Found {len(profiles)} profiles to move to leads table")
+            
+            # Move data directly to leads table
+            moved_data = []
+            for profile in profiles:
+                username = profile.get('username', '')
+                
+                # Safe type conversions
+                def safe_int(value, default=0):
+                    try:
+                        if value is None:
+                            return default
+                        # Handle string numbers like "0.0"
+                        if isinstance(value, str):
+                            # Remove decimal part for integer fields
+                            if '.' in value:
+                                return int(float(value))
+                            return int(value)
+                        return int(value)
+                    except (ValueError, TypeError):
+                        return default
+                
+                def safe_bool(value, default=False):
+                    try:
+                        return bool(value) if value is not None else default
+                    except (ValueError, TypeError):
+                        return default
+                
+                lead_data = {
+                    'id': f"lead_{profile.get('id', int(time.time()))}",
+                    'username': username,
+                    'full_name': profile.get('full_name', ''),
+                    'biography': profile.get('biography', ''),  # Use biography instead of bio
+                    'followers_count': safe_int(profile.get('followers_count', 0)),
+                    'following_count': safe_int(profile.get('following_count', 0)),
+                    'posts_count': safe_int(profile.get('posts_count', 0)),
+                    'is_verified': safe_bool(profile.get('is_verified', False)),
+                    'profile_pic_url': profile.get('profile_pic_url', ''),
+                    'nationality': 'UNKNOWN',  # Default nationality, will be updated later
+                    'confidence': 0.0,  # Default confidence, will be updated later
+                    'session_name': profile.get('session_id', 'unknown_session'),
+                    'scraped_at': profile.get('scraped_at', datetime.now().isoformat()),
+                    'created_at': datetime.now().isoformat(),
+                    'last_updated': datetime.now().isoformat()
+                }
+                moved_data.append(lead_data)
+            
+            # Insert data into leads table
+            if moved_data:
+                # Use upsert to avoid duplicates
+                for lead in moved_data:
+                    try:
+                        # Check if lead already exists
+                        existing = self.supabase.table("leads").select("id").eq("username", lead['username']).execute()
+                        
+                        if existing.data:
+                            # Update existing lead
+                            self.supabase.table("leads").update({
+                                'full_name': lead['full_name'],
+                                'biography': lead['biography'],
+                                'followers_count': lead['followers_count'],
+                                'following_count': lead['following_count'],
+                                'posts_count': lead['posts_count'],
+                                'is_verified': lead['is_verified'],
+                                'profile_pic_url': lead['profile_pic_url'],
+                                'session_name': lead['session_name'],
+                                'scraped_at': lead['scraped_at'],
+                                'last_updated': lead['last_updated']
+                            }).eq("username", lead['username']).execute()
+                        else:
+                            # Insert new lead
+                            self.supabase.table("leads").insert(lead).execute()
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not upsert lead {lead['username']}: {e}")
+                
+                print(f"✅ Moved {len(moved_data)} profiles to leads table")
+                print("📝 Nationality classification will be done directly on leads table")
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Could not move profile data to leads table: {e}")
     
     def _create_tables_if_not_exist(self):
         """Create necessary tables in Supabase if they don't exist"""
@@ -620,11 +758,100 @@ class InstagramBackend:
     # Scraping Functions
     # =========================================================
     
-    def selenium_location_scraper(self, ig_user, ig_pass, location_urls, max_profiles=200):
+    def _ensure_warp_running(self):
+        """
+        Cloudflare WARP'ın çalıştığından emin ol
+        WARP çalışmıyorsa başlatır
+        """
+        import subprocess
+        import time
+        
+        try:
+            # WARP durumunu kontrol et
+            result = subprocess.run(
+                ['warp-cli', 'status'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if 'Connected' in result.stdout:
+                print("✅ Cloudflare WARP is already connected")
+                return True
+            else:
+                print("⚠️ Cloudflare WARP is not connected, attempting to connect...")
+                
+                # WARP'ı bağla (register gerekebilir)
+                try:
+                    # Önce register et (ilk kurulum için)
+                    subprocess.run(
+                        ['warp-cli', 'register'],
+                        capture_output=True,
+                        timeout=10
+                    )
+                except:
+                    pass  # Zaten kayıtlı olabilir
+                
+                # WARP'ı bağla
+                connect_result = subprocess.run(
+                    ['warp-cli', 'connect'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                # Bağlantıyı bekle
+                time.sleep(3)
+                
+                # Tekrar kontrol et
+                status_result = subprocess.run(
+                    ['warp-cli', 'status'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                if 'Connected' in status_result.stdout:
+                    print("✅ Cloudflare WARP connected successfully")
+                    return True
+                else:
+                    print(f"⚠️ Cloudflare WARP connection failed: {status_result.stdout}")
+                    return False
+                    
+        except FileNotFoundError:
+            print("⚠️ warp-cli not found. WARP may not be installed.")
+            return False
+        except Exception as e:
+            print(f"⚠️ Error checking/starting WARP: {str(e)}")
+            return False
+
+    def selenium_location_scraper(self, ig_user, ig_pass, location_urls, max_profiles=200, use_warp=False, user_proxy=None):
         """
         More robust Selenium-based scraper with better page detection and multiple fallback strategies
+        
+        Args:
+            ig_user: Instagram username
+            ig_pass: Instagram password
+            location_urls: List of location URLs to scrape
+            max_profiles: Maximum number of profiles to scrape per location
+            use_warp: If True, use Cloudflare WARP proxy (SOCKS5 on 127.0.0.1:40000)
+            user_proxy: User's SOCKS5 proxy (e.g., "socks5://KULLANICI_IP:1080") - Uses user's IP
         """
+        import sys
+        
+        # WARP kullanılacaksa, WARP'ın çalıştığından emin ol
+        if use_warp:
+            warp_ready = self._ensure_warp_running()
+            if not warp_ready:
+                print("⚠️ WARP is not available, falling back to direct connection")
+                use_warp = False
+        print(f"🚀 selenium_location_scraper called", flush=True)
+        print(f"📋 Parameters: ig_user={ig_user}, max_profiles={max_profiles}", flush=True)
+        print(f"📋 Location URLs: {location_urls}", flush=True)
+        sys.stdout.flush()
+        
         try:
+            print("📦 Importing Selenium modules...", flush=True)
             from selenium import webdriver
             from selenium.webdriver.common.by import By
             from selenium.webdriver.support.ui import WebDriverWait
@@ -632,7 +859,11 @@ class InstagramBackend:
             from selenium.webdriver.chrome.options import Options
             from selenium.common.exceptions import TimeoutException, NoSuchElementException
             import time
-        except ImportError:
+            print("✅ Selenium modules imported successfully", flush=True)
+            sys.stdout.flush()
+        except ImportError as import_error:
+            print(f"❌ Selenium import failed: {import_error}", flush=True)
+            sys.stdout.flush()
             raise Exception("Selenium not installed. Run: pip install selenium")
         
         chrome_options = Options()
@@ -640,28 +871,685 @@ class InstagramBackend:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        
+        # Updated User-Agent to match Chrome version (142)
         chrome_options.add_argument(
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+        
+        # Additional anti-detection arguments
+        chrome_options.add_argument("--disable-web-security")
+        chrome_options.add_argument("--disable-features=IsolateOrigins,site-per-process")
+        chrome_options.add_argument("--disable-site-isolation-trials")
+        chrome_options.add_argument("--lang=en-US,en")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--start-maximized")
+        
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # Add preferences to make browser look more like a real user
+        prefs = {
+            "profile.default_content_setting_values": {
+                "notifications": 2,
+                "geolocation": 2,
+            },
+            "profile.managed_default_content_settings": {
+                "images": 1
+            }
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
+        
+        # Proxy desteği: Önce user_proxy, sonra WARP
+        if user_proxy:
+            print(f"🌐 Using proxy: {user_proxy}")
+            # Proxy formatını kontrol et ve düzenle
+            proxy_url = user_proxy
+            
+            # HTTP/HTTPS proxy için
+            if user_proxy.startswith("http://") or user_proxy.startswith("https://"):
+                chrome_options.add_argument(f"--proxy-server={proxy_url}")
+            # SOCKS5 proxy için
+            elif user_proxy.startswith("socks5://"):
+                chrome_options.add_argument(f"--proxy-server={proxy_url}")
+                # SOCKS5 proxy için DNS çözümleme
+                # Format: socks5://username:password@host:port veya socks5://host:port
+                if "@" in proxy_url:
+                    proxy_host = proxy_url.split("@")[1].split(":")[0]
+                else:
+                    proxy_host = proxy_url.replace("socks5://", "").split(":")[0]
+                chrome_options.add_argument(f"--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE {proxy_host}")
+            else:
+                # Varsayılan olarak HTTP proxy olarak kabul et
+                chrome_options.add_argument(f"--proxy-server=http://{proxy_url}")
+            
+            # Proxy authentication notu:
+            # Chrome, proxy URL'inde username:password formatını desteklemez
+            # Çözüm 1: Proxynetic IP whitelist kullanın (VPS IP'sini whitelist'e ekleyin)
+            # Çözüm 2: Proxy extension kullanın (proxy_auth_extension klasöründe)
+            # Çözüm 3: VPS'te proxy chain kullanın (3proxy gibi)
+            
+            # Eğer proxy URL'inde @ varsa (username:password formatı), uyarı ver
+            if "@" in proxy_url:
+                print("⚠️ Proxy authentication detected in URL")
+                print("⚠️ Chrome doesn't support username:password in proxy URL")
+                print("💡 Solution: Use IP whitelist in Proxynetic dashboard (add VPS IP)")
+                print("💡 Or: Use proxy extension (see proxy_auth_extension folder)")
+                # URL'den authentication bilgisini çıkar, sadece host:port kullan
+                # Kullanıcı IP whitelist kullanmalı
+                if "socks5://" in proxy_url:
+                    proxy_parts = proxy_url.replace("socks5://", "").split("@")
+                    if len(proxy_parts) > 1:
+                        proxy_host_port = proxy_parts[1]
+                        print(f"⚠️ Using proxy without auth: socks5://{proxy_host_port}")
+                        print("⚠️ Make sure to whitelist VPS IP in Proxynetic dashboard!")
+                        chrome_options.add_argument(f"--proxy-server=socks5://{proxy_host_port}")
+                elif "http://" in proxy_url or "https://" in proxy_url:
+                    proxy_parts = proxy_url.split("://")[1].split("@")
+                    if len(proxy_parts) > 1:
+                        proxy_host_port = proxy_parts[1]
+                        protocol = "http://" if "http://" in proxy_url else "https://"
+                        print(f"⚠️ Using proxy without auth: {protocol}{proxy_host_port}")
+                        print("💡 Tip: If using Bright Data, make sure 3proxy is running on VPS")
+                        print("💡 Tip: If using Proxynetic, whitelist VPS IP in dashboard")
+                        chrome_options.add_argument(f"--proxy-server={protocol}{proxy_host_port}")
+                    else:
+                        # No authentication in URL, use as-is (e.g., http://localhost:3128 for 3proxy)
+                        print(f"✅ Using proxy: {proxy_url}")
+                        chrome_options.add_argument(f"--proxy-server={proxy_url}")
+        elif use_warp:
+            print("🌐 Using Cloudflare WARP proxy (SOCKS5://127.0.0.1:40000)")
+            chrome_options.add_argument("--proxy-server=socks5://127.0.0.1:40000")
+            # WARP için ek ayarlar
+            chrome_options.add_argument("--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1")
+        else:
+            print("🌐 Using direct connection (no proxy)")
         
         driver = None
         try:
-            driver = webdriver.Chrome(options=chrome_options)
+            print("🔧 Initializing Chrome driver...", flush=True)
+            sys.stdout.flush()
+            try:
+                driver = webdriver.Chrome(options=chrome_options)
+                print("✅ Chrome driver initialized successfully", flush=True)
+                sys.stdout.flush()
+            except Exception as driver_init_error:
+                print(f"❌ Failed to initialize Chrome driver: {str(driver_init_error)}")
+                print(f"❌ Error type: {type(driver_init_error).__name__}")
+                raise Exception(f"Chrome driver initialization failed: {str(driver_init_error)}")
+            
+            # Check Chrome and ChromeDriver versions
+            try:
+                chrome_version = driver.capabilities.get('browserVersion', 'Unknown')
+                chromedriver_version = driver.capabilities.get('chrome', {}).get('chromedriverVersion', 'Unknown')
+                print(f"🌐 Chrome version: {chrome_version}")
+                print(f"🔧 ChromeDriver version: {chromedriver_version}")
+            except Exception as version_error:
+                print(f"⚠️ Could not get version info: {version_error}")
+            
+            # Enhanced anti-detection scripts
+            print("🔧 Executing enhanced anti-detection scripts...")
+            
+            # Remove webdriver property
             driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
+            # Override Chrome object
+            driver.execute_script("""
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+            """)
+            
+            # Override languages
+            driver.execute_script("""
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en']
+                });
+            """)
+            
+            # Override permissions
+            driver.execute_script("""
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+            """)
+            
+            # Override plugins length
+            driver.execute_script("""
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => {
+                        const plugins = [];
+                        for (let i = 0; i < 5; i++) {
+                            plugins.push({
+                                0: { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+                                description: 'Portable Document Format',
+                                filename: 'internal-pdf-viewer',
+                                length: 1,
+                                name: 'Chrome PDF Plugin'
+                            });
+                        }
+                        return plugins;
+                    }
+                });
+            """)
+            
+            print("✅ Enhanced anti-detection scripts executed")
+            
             # Login with better error handling
+            print("🌐 Navigating to Instagram login page...")
             driver.get("https://www.instagram.com/accounts/login/")
+            print(f"✅ Page loaded. Current URL: {driver.current_url}")
+            print(f"📄 Page title: {driver.title}")
+            
+            # Wait a bit for initial page load
+            print("⏳ Waiting 3 seconds for initial page load...")
+            time.sleep(3)
+            
+            # Scroll to trigger JavaScript execution
+            try:
+                print("📜 Scrolling page to trigger JavaScript execution...")
+                driver.execute_script("window.scrollTo(0, 100);")
+                time.sleep(1)
+                driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(1)
+                print("✅ Page scrolled")
+            except:
+                pass
+            
+            # ========== VERIFY WE'RE ON INSTAGRAM PAGE ==========
+            print("\n" + "="*60)
+            print("🔍 VERIFYING PAGE IS INSTAGRAM LOGIN PAGE...")
+            print("="*60)
+            
+            # Check if we're actually on Instagram
+            current_url = driver.current_url
+            page_source = driver.page_source.lower()
+            
+            is_instagram = False
+            if "instagram.com" in current_url.lower():
+                is_instagram = True
+                print("✅ URL contains 'instagram.com'")
+            else:
+                print(f"⚠️ URL does not contain 'instagram.com': {current_url}")
+            
+            # Check page source for Instagram indicators
+            instagram_indicators = [
+                "instagram",
+                "login",
+                "username",
+                "password",
+                "meta property=\"og:site_name\"",
+                "react-root",
+                "__d",
+            ]
+            
+            found_indicators = []
+            for indicator in instagram_indicators:
+                if indicator in page_source:
+                    count = page_source.count(indicator)
+                    found_indicators.append(f"{indicator}: {count} occurrences")
+                    print(f"✅ Found '{indicator}' in page source ({count} times)")
+                else:
+                    print(f"❌ '{indicator}' NOT found in page source")
+            
+            # Check for error pages
+            error_indicators = [
+                "this site can't be reached",
+                "err_",
+                "dns_probe",
+                "network error",
+                "unable to connect",
+                "chrome-error",
+                "error code",
+            ]
+            
+            found_errors = []
+            for error_indicator in error_indicators:
+                if error_indicator in page_source:
+                    found_errors.append(error_indicator)
+                    print(f"⚠️ ERROR INDICATOR FOUND: '{error_indicator}'")
+            
+            # Log page source snippet for debugging
+            print(f"\n📄 Page source preview (first 3000 chars):")
+            print("="*60)
+            print(page_source[:3000])
+            print("="*60)
+            
+            # Check if "error code" is actually a real error or just in comments/JS
+            # Sometimes "error code" appears in JavaScript comments but page is fine
+            if "error code" in page_source:
+                # Check if it's in a visible error message
+                error_code_context = page_source[max(0, page_source.find("error code")-200):page_source.find("error code")+200]
+                print(f"\n🔍 Context around 'error code':")
+                print(error_code_context)
+                
+                # If it's in a script tag or comment, it might be OK
+                if "error code" in page_source and ("<script" in error_code_context.lower() or "//" in error_code_context or "/*" in error_code_context):
+                    print("⚠️ 'error code' found but appears to be in JavaScript/comment - might be OK")
+                    found_errors = [e for e in found_errors if e != "error code"]  # Remove from errors
+            
+            if found_errors and len(found_errors) > 0:
+                print(f"\n❌ PAGE APPEARS TO BE AN ERROR PAGE!")
+                print(f"   Found error indicators: {', '.join(found_errors)}")
+                print(f"   This is likely a network/connection error or bot detection")
+                
+                # Try to reload the page once
+                print("\n🔄 Attempting to reload the page...")
+                try:
+                    driver.refresh()
+                    time.sleep(5)
+                    new_url = driver.current_url
+                    new_page_source = driver.page_source.lower()
+                    print(f"✅ Page reloaded. New URL: {new_url}")
+                    
+                    # Check again
+                    if "instagram" in new_page_source and "react" in new_page_source:
+                        print("✅ After reload: Instagram content detected!")
+                        # Continue with the process
+                    else:
+                        raise Exception(f"Instagram page failed to load even after reload. Error indicators found: {', '.join(found_errors)}")
+                except Exception as reload_error:
+                    raise Exception(f"Instagram page failed to load. Error indicators found: {', '.join(found_errors)}. Reload attempt failed: {str(reload_error)[:100]}")
+            
+            # Check if page source looks like Instagram
+            if len(page_source) < 1000:
+                print(f"⚠️ Page source is very short ({len(page_source)} chars) - might be an error page")
+            else:
+                print(f"✅ Page source length: {len(page_source)} chars (looks normal)")
+            
+            # Check for React root (Instagram uses React)
+            if "react" in page_source or "__d" in page_source:
+                print("✅ React detected - likely Instagram page")
+            else:
+                print("⚠️ React not detected - might not be Instagram page")
+            
+            if not is_instagram or len(found_indicators) < 3:
+                print(f"\n❌ PAGE VERIFICATION FAILED!")
+                print(f"   is_instagram: {is_instagram}")
+                print(f"   Found indicators: {len(found_indicators)}")
+                raise Exception(f"Page verification failed. Current URL: {current_url}, Found {len(found_indicators)} Instagram indicators")
+            
+            print("="*60 + "\n")
+            # ========== END PAGE VERIFICATION ==========
+            
+            # Wait for page to fully load
+            print("⏳ Waiting for page to fully load...")
+            
+            # Wait for page ready state
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            print("✅ Page ready state: complete")
+            
+            # Wait for React to load (Instagram uses React)
+            print("⏳ Waiting for React/JavaScript to load...")
+            try:
+                # Wait for React root element
+                WebDriverWait(driver, 20).until(
+                    lambda d: d.execute_script("""
+                        return typeof window !== 'undefined' && 
+                               (document.querySelector('#react-root') !== null || 
+                                window.__d !== undefined ||
+                                document.body.innerHTML.length > 1000);
+                    """)
+                )
+                print("✅ React/JavaScript loaded")
+            except TimeoutException:
+                print("⚠️ React root not found after 20 seconds, continuing anyway...")
+            
+            # Additional wait for React/JavaScript to render
+            print("⏳ Waiting additional 3 seconds for dynamic content to render...")
+            time.sleep(3)
+            
+            # ========== DETECT AND LOG POPUPS/MODALS ==========
+            print("\n" + "="*60)
+            print("🔍 CHECKING FOR POPUPS/MODALS ON PAGE...")
+            print("="*60)
+            
+            # Check for common popup/modal indicators
+            popup_indicators = [
+                (By.XPATH, "//div[contains(@role, 'dialog')]"),
+                (By.XPATH, "//div[contains(@class, 'modal')]"),
+                (By.XPATH, "//div[contains(@class, 'popup')]"),
+                (By.XPATH, "//div[contains(@class, 'overlay')]"),
+                (By.XPATH, "//div[contains(@aria-label, 'dialog')]"),
+                (By.CSS_SELECTOR, "[role='dialog']"),
+                (By.CSS_SELECTOR, "[role='alertdialog']"),
+            ]
+            
+            found_popups = []
+            for indicator_type, indicator_value in popup_indicators:
+                try:
+                    popups = driver.find_elements(indicator_type, indicator_value)
+                    if popups:
+                        for popup in popups:
+                            try:
+                                is_displayed = popup.is_displayed()
+                                text = popup.text[:200] if popup.text else "No text"
+                                tag = popup.tag_name
+                                popup_id = popup.get_attribute("id") or "no-id"
+                                popup_class = popup.get_attribute("class") or "no-class"
+                                found_popups.append({
+                                    "type": indicator_value,
+                                    "displayed": is_displayed,
+                                    "text": text,
+                                    "tag": tag,
+                                    "id": popup_id,
+                                    "class": popup_class[:100]
+                                })
+                            except:
+                                pass
+                except:
+                    pass
+            
+            if found_popups:
+                print(f"⚠️ Found {len(found_popups)} potential popup/modal elements:")
+                for i, popup in enumerate(found_popups, 1):
+                    print(f"  [{i}] Type: {popup['type']}")
+                    print(f"      Displayed: {popup['displayed']}")
+                    print(f"      Tag: {popup['tag']}, ID: {popup['id']}")
+                    print(f"      Class: {popup['class']}")
+                    print(f"      Text: {popup['text'][:150]}...")
+            else:
+                print("✅ No popup/modal elements detected")
+            
+            # Check for common popup button texts
+            print("\n🔍 Checking for common popup buttons...")
+            common_button_texts = [
+                "Accept", "Accept All", "Allow", "Allow All",
+                "Decline", "Reject", "Not Now", "Not Now, Thanks",
+                "Save", "Save Info", "Don't Save",
+                "Turn on", "Turn on Notifications", "Not Now",
+                "Get App", "Not Now", "Maybe Later",
+                "Cookies", "Cookie", "Privacy", "Terms"
+            ]
+            
+            all_buttons = driver.find_elements(By.TAG_NAME, "button")
+            all_divs_clickable = driver.find_elements(By.XPATH, "//div[@role='button']")
+            all_clickable = list(all_buttons) + list(all_divs_clickable)
+            
+            print(f"📊 Found {len(all_clickable)} clickable elements (buttons + divs with role='button')")
+            
+            popup_buttons = []
+            for btn in all_clickable[:50]:  # Check first 50 to avoid too much output
+                try:
+                    if btn.is_displayed():
+                        btn_text = btn.text.strip()
+                        btn_aria_label = btn.get_attribute("aria-label") or ""
+                        btn_type = btn.get_attribute("type") or ""
+                        
+                        # Check if button text matches common popup patterns
+                        for pattern in common_button_texts:
+                            if pattern.lower() in btn_text.lower() or pattern.lower() in btn_aria_label.lower():
+                                popup_buttons.append({
+                                    "text": btn_text[:100],
+                                    "aria_label": btn_aria_label[:100],
+                                    "type": btn_type,
+                                    "tag": btn.tag_name
+                                })
+                                break
+                except:
+                    pass
+            
+            if popup_buttons:
+                print(f"⚠️ Found {len(popup_buttons)} potential popup buttons:")
+                for i, btn in enumerate(popup_buttons, 1):
+                    print(f"  [{i}] Text: '{btn['text']}'")
+                    print(f"      Aria-label: '{btn['aria_label']}'")
+                    print(f"      Type: {btn['type']}, Tag: {btn['tag']}")
+            else:
+                print("✅ No obvious popup buttons found")
+            
+            # List all visible buttons for debugging
+            print(f"\n📋 All visible buttons on page (first 20):")
+            visible_buttons = []
+            for btn in all_clickable[:20]:
+                try:
+                    if btn.is_displayed():
+                        btn_text = btn.text.strip()[:50]
+                        btn_aria = (btn.get_attribute("aria-label") or "")[:50]
+                        visible_buttons.append(f"Text: '{btn_text}' | Aria: '{btn_aria}'")
+                except:
+                    pass
+            
+            for i, btn_info in enumerate(visible_buttons, 1):
+                print(f"  [{i}] {btn_info}")
+            
+            # Check page source for popup-related keywords
+            print("\n🔍 Checking page source for popup-related keywords...")
+            page_source_lower = driver.page_source.lower()
+            popup_keywords = ["cookie", "consent", "privacy", "notification", "age", "verify", "save login", "turn on"]
+            found_keywords = []
+            for keyword in popup_keywords:
+                if keyword in page_source_lower:
+                    count = page_source_lower.count(keyword)
+                    found_keywords.append(f"{keyword}: {count} occurrences")
+            
+            if found_keywords:
+                print("⚠️ Found popup-related keywords in page source:")
+                for kw in found_keywords:
+                    print(f"  - {kw}")
+            else:
+                print("✅ No popup-related keywords found")
+            
+            # Try to take a screenshot (works in headless too)
+            try:
+                screenshot_path = "/tmp/instagram_login_page.png"
+                driver.save_screenshot(screenshot_path)
+                print(f"📸 Screenshot saved to {screenshot_path}")
+            except Exception as screenshot_error:
+                print(f"⚠️ Could not take screenshot: {screenshot_error}")
+            
+            print("="*60 + "\n")
+            # ========== END POPUP DETECTION ==========
+            
+            # ========== ATTEMPT TO CLOSE POPUPS ==========
+            print("🔧 Attempting to close any popups...")
+            popup_closed = False
+            
+            # Common popup close button selectors
+            close_selectors = [
+                (By.XPATH, "//button[contains(text(), 'Not Now')]"),
+                (By.XPATH, "//button[contains(text(), 'Not now')]"),
+                (By.XPATH, "//button[contains(text(), 'Decline')]"),
+                (By.XPATH, "//button[contains(text(), 'Reject')]"),
+                (By.XPATH, "//button[contains(text(), 'Maybe Later')]"),
+                (By.XPATH, "//div[contains(text(), 'Not Now')]"),
+                (By.XPATH, "//div[@role='button' and contains(text(), 'Not Now')]"),
+                (By.XPATH, "//button[@aria-label='Close']"),
+                (By.XPATH, "//button[@aria-label='Not Now']"),
+                (By.XPATH, "//svg[@aria-label='Close']/ancestor::button"),
+                (By.XPATH, "//button[contains(@class, 'close')]"),
+                (By.XPATH, "//button[contains(@class, 'dismiss')]"),
+                (By.CSS_SELECTOR, "button[aria-label*='Close']"),
+                (By.CSS_SELECTOR, "button[aria-label*='Not Now']"),
+                (By.CSS_SELECTOR, "svg[aria-label='Close']"),
+            ]
+            
+            for selector_type, selector_value in close_selectors:
+                try:
+                    close_buttons = driver.find_elements(selector_type, selector_value)
+                    for btn in close_buttons:
+                        try:
+                            if btn.is_displayed():
+                                btn_text = btn.text.strip()[:50]
+                                print(f"  🎯 Found close button: '{btn_text}' - Clicking...")
+                                btn.click()
+                                time.sleep(1)
+                                popup_closed = True
+                                print(f"  ✅ Clicked close button: '{btn_text}'")
+                        except Exception as click_error:
+                            print(f"  ⚠️ Could not click button: {str(click_error)[:50]}")
+                            continue
+                except Exception as selector_error:
+                    continue
+            
+            # Try pressing Escape key to close modals
+            if not popup_closed:
+                try:
+                    from selenium.webdriver.common.keys import Keys
+                    print("  ⌨️ Trying Escape key to close popup...")
+                    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                    time.sleep(1)
+                    print("  ✅ Pressed Escape key")
+                except:
+                    pass
+            
+            if popup_closed:
+                print("✅ Popup closed successfully")
+            else:
+                print("ℹ️ No popup close buttons found or popup already closed")
+            
+            # Wait a bit after closing popup
+            if popup_closed:
+                time.sleep(2)
+                print("⏳ Waiting 2 seconds after popup close...")
+            
+            print("="*60 + "\n")
+            # ========== END POPUP CLOSING ==========
+            
+            # Wait for at least one input element to appear (indicates form is loaded)
+            print("⏳ Waiting for login form to render...")
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "input"))
+                )
+                print("✅ Input elements detected on page")
+            except TimeoutException:
+                print("⚠️ No input elements found after 15 seconds, continuing anyway...")
+            
+            # Check page ready state
+            ready_state = driver.execute_script("return document.readyState")
+            print(f"📊 Page ready state: {ready_state}")
             
             try:
-                # Wait for login form
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.NAME, "username"))
-                )
+                # Wait for login form - try both username and email fields
+                print("🔍 Looking for username/email field...")
+                username_field = None
+                password_field = None
+                
+                # Try multiple selectors for username field
+                username_selectors = [
+                    (By.NAME, "username"),
+                    (By.NAME, "email"),
+                    (By.CSS_SELECTOR, "input[name='username']"),
+                    (By.CSS_SELECTOR, "input[name='email']"),
+                    (By.XPATH, "//input[@name='username']"),
+                    (By.XPATH, "//input[@name='email']"),
+                    (By.XPATH, "//input[@aria-label[contains(., 'kullanıcı adı') or contains(., 'username') or contains(., 'e-posta') or contains(., 'email') or contains(., 'Telefon')]]"),
+                    (By.CSS_SELECTOR, "input[aria-label*='kullanıcı adı'], input[aria-label*='username'], input[aria-label*='e-posta'], input[aria-label*='email'], input[aria-label*='Telefon']"),
+                    (By.XPATH, "//input[@type='text' and (@name='username' or @name='email')]"),
+                    (By.CSS_SELECTOR, "input[aria-label*='Telefon numarası']"),
+                    (By.XPATH, "//input[@aria-label[contains(., 'Telefon numarası')]]"),
+                ]
+                
+                for selector_type, selector_value in username_selectors:
+                    try:
+                        print(f"   Trying username selector: {selector_value}")
+                        # Use visibility_of_element_located instead of presence_of_element_located
+                        # This ensures the element is not only in DOM but also visible
+                        username_field = WebDriverWait(driver, 10).until(
+                            EC.visibility_of_element_located((selector_type, selector_value))
+                        )
+                        print(f"✅ Username field found with selector: {selector_value}!")
+                        break
+                    except TimeoutException:
+                        continue
+                    except Exception as e:
+                        print(f"   Selector {selector_value} failed: {str(e)[:50]}")
+                        continue
+                
+                if username_field is None:
+                    # Debug: Get page info before raising error
+                    try:
+                        # Wait a bit more and try again
+                        print("⏳ Waiting additional 3 seconds for page to fully render...")
+                        time.sleep(3)
+                        
+                        all_inputs = driver.find_elements(By.TAG_NAME, "input")
+                        print(f"📊 Found {len(all_inputs)} total input elements on page")
+                        
+                        input_info = []
+                        for i, inp in enumerate(all_inputs[:15]):
+                            try:
+                                name_attr = inp.get_attribute("name")
+                                type_attr = inp.get_attribute("type")
+                                aria_label = inp.get_attribute("aria-label")
+                                class_attr = inp.get_attribute("class")
+                                is_displayed = inp.is_displayed()
+                                input_info.append(f"[{i}] name={name_attr}, type={type_attr}, aria-label={aria_label}, displayed={is_displayed}, class={class_attr[:30] if class_attr else 'None'}")
+                            except Exception as inp_e:
+                                input_info.append(f"[{i}] Error getting attributes: {str(inp_e)[:50]}")
+                        
+                        # Get page source snippet for debugging
+                        page_source_full = driver.page_source
+                        page_source_length = len(page_source_full)
+                        print(f"📄 Full page source length: {page_source_length} characters")
+                        
+                        # Show first 5000 chars if available
+                        page_source_snippet = page_source_full[:5000] if page_source_length > 5000 else page_source_full
+                        print(f"📄 Page source snippet (first 5000 chars):\n{page_source_snippet}")
+                        
+                        # Check if this looks like an error page
+                        page_source_lower = page_source_full.lower()
+                        if "chrome-error" in page_source_lower or "err_" in page_source_lower or "this site can't be reached" in page_source_lower:
+                            print("❌ PAGE APPEARS TO BE A CHROME ERROR PAGE!")
+                            print("   This means Instagram failed to load or blocked the request")
+                            raise Exception("Instagram page failed to load - Chrome error page detected. This could be due to bot detection, network issues, or IP blocking.")
+                        
+                        # Check for Instagram-specific content
+                        if "instagram" not in page_source_lower[:10000]:
+                            print("⚠️ WARNING: 'instagram' keyword not found in first 10000 chars of page source")
+                            print("   This might not be the Instagram login page")
+                        
+                        # Show body content if available
+                        try:
+                            body_element = driver.find_element(By.TAG_NAME, "body")
+                            body_text = body_element.text[:500] if body_element.text else "No text"
+                            print(f"📝 Body text (first 500 chars): {body_text}")
+                        except:
+                            print("⚠️ Could not get body text")
+                        
+                        error_msg = f"Username/email field not found. Found {len(all_inputs)} input elements. Page source length: {page_source_length} chars. First 15 inputs:\n" + "\n".join(input_info)
+                        print(f"❌ {error_msg}")
+                        raise Exception(error_msg)
+                    except Exception as debug_e:
+                        raise Exception(f"Username/email field not found. Debug error: {str(debug_e)}")
+                
+                # Try multiple selectors for password field
+                print("🔍 Looking for password field...")
+                password_selectors = [
+                    (By.NAME, "password"),
+                    (By.NAME, "pass"),
+                    (By.CSS_SELECTOR, "input[name='password']"),
+                    (By.CSS_SELECTOR, "input[name='pass']"),
+                    (By.XPATH, "//input[@name='password']"),
+                    (By.XPATH, "//input[@name='pass']"),
+                    (By.XPATH, "//input[@type='password']"),
+                ]
+                
+                for selector_type, selector_value in password_selectors:
+                    try:
+                        print(f"   Trying password selector: {selector_value}")
+                        # Use visibility_of_element_located to ensure element is visible
+                        password_field = WebDriverWait(driver, 10).until(
+                            EC.visibility_of_element_located((selector_type, selector_value))
+                        )
+                        print(f"✅ Password field found with selector: {selector_value}!")
+                        break
+                    except TimeoutException:
+                        continue
+                    except Exception as e:
+                        print(f"   Password selector {selector_value} failed: {str(e)[:50]}")
+                        continue
+                
+                if password_field is None:
+                    raise Exception("Password field not found")
                 
                 # Fill credentials
-                username_field = driver.find_element(By.NAME, "username")
-                password_field = driver.find_element(By.NAME, "password")
+                print("📝 Filling login credentials...")
                 
                 username_field.clear()
                 username_field.send_keys(ig_user)
@@ -671,14 +1559,55 @@ class InstagramBackend:
                 password_field.send_keys(ig_pass)
                 time.sleep(1)
                 
-                # Submit login
-                login_button = driver.find_element(By.XPATH, "//button[@type='submit']")
-                login_button.click()
+                # Submit login - try multiple selectors for button/div
+                print("🔍 Looking for login button...")
+                login_button = None
+                login_selectors = [
+                    (By.XPATH, "//button[@type='submit']"),
+                    (By.XPATH, "//div[contains(text(), 'Log in')]"),
+                    (By.XPATH, "//div[contains(text(), 'Log In')]"),
+                    (By.XPATH, "//button[contains(text(), 'Log in')]"),
+                    (By.XPATH, "//button[contains(text(), 'Log In')]"),
+                ]
                 
+                for i, (selector_type, selector_value) in enumerate(login_selectors, 1):
+                    try:
+                        print(f"   Trying selector {i}/{len(login_selectors)}: {selector_value}")
+                        login_button = driver.find_element(selector_type, selector_value)
+                        print(f"✅ Login button found with selector {i}!")
+                        break
+                    except Exception as e:
+                        print(f"   ❌ Selector {i} failed: {str(e)[:50]}")
+                        continue
+                
+                if login_button is None:
+                    # Debug: Save page source for analysis
+                    try:
+                        page_source = driver.page_source
+                        print(f"⚠️ Page source length: {len(page_source)} characters")
+                        print(f"⚠️ Current URL: {driver.current_url}")
+                        print(f"⚠️ Page title: {driver.title}")
+                        # Try to find any button or div with text containing "log"
+                        try:
+                            all_buttons = driver.find_elements(By.TAG_NAME, "button")
+                            all_divs = driver.find_elements(By.TAG_NAME, "div")
+                            print(f"⚠️ Found {len(all_buttons)} buttons and {len(all_divs)} divs on page")
+                        except:
+                            pass
+                    except Exception as debug_error:
+                        print(f"⚠️ Could not get debug info: {debug_error}")
+                    raise Exception("Login button not found - Instagram may have changed")
+                
+                print("🖱️ Clicking login button...")
+                login_button.click()
+                print("✅ Login button clicked")
+                
+                print("⏳ Waiting for login to process (10 seconds)...")
                 time.sleep(10)
                 
                 # Check if login was successful
                 current_url = driver.current_url
+                print(f"📊 After login, current URL: {current_url}")
                 if "challenge" in current_url or "checkpoint" in current_url:
                     # Handle 2FA
                     result = self.handle_2fa_verification(driver, ig_user)
@@ -691,7 +1620,32 @@ class InstagramBackend:
                 elif "login" in current_url:
                     raise Exception("Login failed - check credentials")
                 
-            except TimeoutException:
+            except TimeoutException as e:
+                print(f"❌ TimeoutException: {str(e)}")
+                print(f"❌ Current URL: {driver.current_url}")
+                print(f"❌ Page title: {driver.title}")
+                try:
+                    # Try to get page source for debugging
+                    page_source_length = len(driver.page_source)
+                    print(f"❌ Page source length: {page_source_length} characters")
+                    
+                    # Check if page loaded at all
+                    ready_state = driver.execute_script("return document.readyState")
+                    print(f"❌ Page ready state: {ready_state}")
+                    
+                    # Try to find any input fields
+                    all_inputs = driver.find_elements(By.TAG_NAME, "input")
+                    print(f"❌ Found {len(all_inputs)} input elements on page")
+                    for inp in all_inputs[:5]:  # Show first 5 inputs
+                        try:
+                            name_attr = inp.get_attribute("name")
+                            type_attr = inp.get_attribute("type")
+                            print(f"   Input: name={name_attr}, type={type_attr}")
+                        except:
+                            pass
+                except Exception as debug_error:
+                    print(f"❌ Could not get debug info: {debug_error}")
+                
                 raise Exception("Login form not found - Instagram may have changed")
             
             # Handle post-login modals
@@ -847,7 +1801,9 @@ class InstagramBackend:
                     continue
             
             # Cleanup and return results
+            print("🔒 Closing Chrome driver...")
             driver.quit()
+            print("✅ Chrome driver closed successfully")
             
             # Deduplicate final results
             unique_usernames = list(set(all_usernames))
@@ -874,10 +1830,87 @@ class InstagramBackend:
                 return []
             
         except Exception as e:
+            import sys
+            error_type = type(e).__name__
+            error_msg = str(e)
+            print(f"❌ Critical error occurred!", flush=True)
+            print(f"❌ Error type: {error_type}", flush=True)
+            print(f"❌ Error message: {error_msg}", flush=True)
+            import traceback
+            print(f"❌ Full traceback:", flush=True)
+            traceback.print_exc()
+            sys.stdout.flush()
+            
             if driver:
-                driver.quit()
+                try:
+                    print("🔒 Attempting to close Chrome driver after error...")
+                    # Try to get current URL and page info before closing
+                    try:
+                        current_url = driver.current_url
+                        page_title = driver.title
+                        print(f"📊 Current URL before close: {current_url}")
+                        print(f"📊 Page title before close: {page_title}")
+                    except:
+                        pass
+                    driver.quit()
+                    print("✅ Chrome driver closed after error")
+                except Exception as quit_error:
+                    print(f"⚠️ Error closing driver: {quit_error}")
             raise Exception(f"Critical error: {e}")
     
+    def scrape_instagram_profile(self, username, max_posts=10, include_stories=False, session_name=None):
+        """Scrape a single Instagram profile"""
+        try:
+            # Use the existing apify_profile_scraper for single username
+            result = self.apify_profile_scraper([username], max_profiles=1)
+            
+            if result and len(result) > 0:
+                profile_data = result[0]
+                
+                # Add session_name if provided
+                if session_name:
+                    profile_data['session_name'] = session_name
+                else:
+                    profile_data['session_name'] = f"Profile Scraping - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                
+                # Save to leads storage
+                lead_data = {
+                    'id': f"lead_{int(time.time())}_{username}",
+                    'username': username,
+                    'full_name': profile_data.get('full_name', ''),
+                    'biography': profile_data.get('biography', ''),
+                    'followers_count': int(profile_data.get('followers_count', 0)),
+                    'following_count': int(profile_data.get('following_count', 0)),
+                    'posts_count': int(profile_data.get('posts_count', 0)),
+                    'is_verified': profile_data.get('is_verified', False),
+                    'profile_pic_url': profile_data.get('profile_pic_url', ''),
+                    'nationality': 'UNKNOWN',
+                    'confidence': 0.0,
+                    'session_name': profile_data['session_name'],
+                    'scraped_at': datetime.now().isoformat(),
+                    'created_at': datetime.now().isoformat(),
+                    'last_updated': datetime.now().isoformat()
+                }
+                
+                # Add to storage
+                self.leads_storage.append(lead_data)
+                
+                # Save to Supabase
+                if self.supabase_connected:
+                    try:
+                        self.supabase.table("leads").insert(lead_data).execute()
+                        print(f"💾 Saved lead {username} to Supabase")
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not save lead to Supabase: {e}")
+                
+                return profile_data
+            else:
+                raise Exception("No profile data found")
+                
+        except Exception as e:
+            print(f"❌ Error scraping profile {username}: {str(e)}")
+            raise e
+
     def apify_profile_scraper(self, usernames, max_profiles=100):
         """
         Apify-based profile scraper using the working version from original backup
@@ -1526,8 +2559,26 @@ class InstagramBackend:
                 password_field.send_keys(password)
                 time.sleep(1)
                 
-                # Click login button
-                login_button = driver.find_element(By.XPATH, "//button[@type='submit']")
+                # Click login button - try multiple selectors for button/div
+                login_button = None
+                login_selectors = [
+                    (By.XPATH, "//button[@type='submit']"),
+                    (By.XPATH, "//div[contains(text(), 'Log in')]"),
+                    (By.XPATH, "//div[contains(text(), 'Log In')]"),
+                    (By.XPATH, "//button[contains(text(), 'Log in')]"),
+                    (By.XPATH, "//button[contains(text(), 'Log In')]"),
+                ]
+                
+                for selector_type, selector_value in login_selectors:
+                    try:
+                        login_button = driver.find_element(selector_type, selector_value)
+                        break
+                    except:
+                        continue
+                
+                if login_button is None:
+                    raise Exception("Login button not found - Instagram may have changed")
+                
                 login_button.click()
                 time.sleep(8)  # Increased wait time for login processing
                 
@@ -3061,28 +4112,80 @@ Umarım bu mesaj sizi rahatsız etmez.
     def login_user(self, username, password):
         """Authenticate user login"""
         try:
+            print(f"🔐 Attempting login for user: {username}")
+            
+            # Check Supabase connection
             if not self.supabase_connected:
+                print("❌ Supabase not connected")
                 return False, "Database not connected", None
             
+            # Check if Supabase client exists
+            if not self.supabase:
+                print("❌ Supabase client not initialized")
+                return False, "Database client not initialized", None
+            
+            # Test DNS resolution for Supabase URL
+            try:
+                import socket
+                supabase_url = self.config.get('SUPABASE_URL', '')
+                if supabase_url:
+                    # Extract hostname from URL
+                    from urllib.parse import urlparse
+                    parsed = urlparse(supabase_url)
+                    hostname = parsed.hostname
+                    if hostname:
+                        print(f"🔍 Testing DNS resolution for: {hostname}")
+                        socket.gethostbyname(hostname)
+                        print(f"✅ DNS resolution successful for {hostname}")
+            except socket.gaierror as dns_error:
+                print(f"❌ DNS resolution failed: {dns_error}")
+                return False, f"DNS resolution failed: Cannot connect to database server", None
+            except Exception as dns_check_error:
+                print(f"⚠️ DNS check error: {dns_check_error}")
+            
             password_hash = self._hash_password(password)
+            print(f"🔍 Searching for user in database...")
             
             # Find user by username and password
-            result = self.supabase.table("users").select("*").eq("username", username).eq("password_hash", password_hash).eq("is_active", True).execute()
+            try:
+                result = self.supabase.table("users").select("*").eq("username", username).eq("password_hash", password_hash).eq("is_active", True).execute()
+                print(f"📊 Database query executed")
+            except Exception as query_error:
+                print(f"❌ Database query failed: {query_error}")
+                print(f"❌ Error type: {type(query_error).__name__}")
+                # Check if it's a DNS/network error
+                error_str = str(query_error).lower()
+                if "name or service not known" in error_str or "gaierror" in error_str or "dns" in error_str:
+                    return False, "Network error: Cannot resolve database hostname. Please check your internet connection and DNS settings.", None
+                raise query_error
             
             if result.data:
                 user = result.data[0]
                 
                 # Update last login
-                self.supabase.table("users").update({"last_login": datetime.now().isoformat()}).eq("id", user["id"]).execute()
+                try:
+                    self.supabase.table("users").update({"last_login": datetime.now().isoformat()}).eq("id", user["id"]).execute()
+                except Exception as update_error:
+                    print(f"⚠️ Failed to update last_login: {update_error}")
                 
                 print(f"✅ User {username} logged in successfully")
                 return True, "Login successful", user
             else:
+                print(f"❌ Invalid credentials for user: {username}")
                 return False, "Invalid username or password", None
                 
         except Exception as e:
-            print(f"❌ Error during login: {e}")
-            return False, str(e), None
+            error_msg = str(e)
+            print(f"❌ Error during login: {error_msg}")
+            print(f"❌ Error type: {type(e).__name__}")
+            
+            # Check for DNS/network errors
+            if "name or service not known" in error_msg.lower() or "gaierror" in error_msg.lower():
+                return False, "Network error: Cannot connect to database. Please check your internet connection.", None
+            elif "timeout" in error_msg.lower():
+                return False, "Connection timeout: Database server is not responding.", None
+            
+            return False, f"Login error: {error_msg}", None
     
     def get_user_sessions(self, user_id):
         """Get all sessions for a user"""
@@ -3324,10 +4427,31 @@ Umarım bu mesaj sizi rahatsız etmez.
             return []
     
     def get_all_sessions(self):
-        """Get all sessions from storage"""
+        """Get all sessions from leads storage"""
         try:
-            print(f"🔍 Getting all sessions from storage: {len(self.sessions_storage)} sessions")
-            return self.sessions_storage
+            print(f"🔍 Getting all sessions from leads storage: {len(self.leads_storage)} leads")
+            
+            # Create sessions from leads data
+            session_map = {}
+            for lead in self.leads_storage:
+                session_name = lead.get('session_name', 'Unknown Session')
+                if session_name not in session_map:
+                    session_map[session_name] = {
+                        'id': session_name,
+                        'name': session_name,
+                        'session_name': session_name,
+                        'lead_count': 0,
+                        'created_at': lead.get('created_at', ''),
+                        'last_updated': lead.get('last_updated', '')
+                    }
+                session_map[session_name]['lead_count'] += 1
+            
+            sessions = list(session_map.values())
+            print(f"📊 Created {len(sessions)} sessions from leads data")
+            for session in sessions:
+                print(f"📋 Session: {session['name']} ({session['lead_count']} leads)")
+            
+            return sessions
         except Exception as e:
             print(f"❌ Error getting sessions: {str(e)}")
             return []

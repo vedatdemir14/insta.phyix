@@ -89,3 +89,4 @@ Vercel Dashboard'da şu environment variable'ı ayarlayın:
 
 Detaylı rehber için: `VERCEL_DEPLOYMENT.md` dosyasına bakın.
 
+
