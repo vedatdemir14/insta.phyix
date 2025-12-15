@@ -30,6 +30,7 @@ import {
 } from '@ant-design/icons';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { detectUserIP, IPDetectionResult } from '../utils/ipDetection';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -107,6 +108,24 @@ const Campaigns: React.FC = () => {
 
   const LocationScrapingTab: React.FC = () => {
     const [form] = Form.useForm();
+    const [userIP, setUserIP] = useState<IPDetectionResult | null>(null);
+    const [detectingIP, setDetectingIP] = useState(false);
+
+    // Kullanıcı IP'sini tespit et (component mount olduğunda)
+    useEffect(() => {
+      const detectIP = async () => {
+        try {
+          setDetectingIP(true);
+          const ipInfo = await detectUserIP();
+          setUserIP(ipInfo);
+        } catch (error) {
+          console.warn('Could not detect user IP:', error);
+        } finally {
+          setDetectingIP(false);
+        }
+      };
+      detectIP();
+    }, []);
 
     const onFinish = async (values: any) => {
       try {
@@ -130,7 +149,10 @@ const Campaigns: React.FC = () => {
           ig_user: selectedAccount.username,
           ig_pass: selectedAccount.password,
           locations: locationUrls,
-          max_profiles: values.max_profiles || 50
+          max_profiles: values.max_profiles || 50,
+          use_warp: values.use_my_ip ? false : (values.use_warp || false), // WARP sadece use_my_ip false ise
+          user_ip: userIP?.ip || null, // Kullanıcı IP'si (opsiyonel, log için)
+          user_proxy: values.use_my_ip ? values.user_proxy : null // Kullanıcı proxy'si
         };
         
         const response = await api.post('/campaigns/location-scraping', requestData);
@@ -158,9 +180,31 @@ const Campaigns: React.FC = () => {
         }
         
         // Keep form inputs filled - don't reset
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error starting location scraping:', error);
-        message.error('Failed to start location scraping campaign');
+        
+        // Extract detailed error message
+        let errorMessage = 'Failed to start location scraping campaign';
+        if (error.response?.data?.detail) {
+          if (typeof error.response.data.detail === 'string') {
+            errorMessage = error.response.data.detail;
+          } else if (error.response.data.detail.error) {
+            errorMessage = error.response.data.detail.error;
+            // Show traceback in console for debugging
+            if (error.response.data.detail.traceback) {
+              console.error('Backend traceback:', error.response.data.detail.traceback);
+            }
+          }
+        }
+        
+        // Show detailed error message
+        message.error({
+          content: errorMessage,
+          duration: 10, // Show for 10 seconds
+        });
+        
+        // Also log full error to console
+        console.error('Full error details:', error.response?.data);
       } finally {
         setLoading(false);
       }
@@ -231,6 +275,99 @@ const Campaigns: React.FC = () => {
               placeholder="https://www.instagram.com/explore/locations/123456789/&#10;https://www.instagram.com/explore/locations/987654321/"
             />
           </Form.Item>
+
+          {/* Proxy Options */}
+          <Form.Item label="Proxy Options">
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Form.Item
+                name="use_warp"
+                valuePropName="checked"
+                initialValue={false}
+                style={{ marginBottom: 0 }}
+              >
+                <Checkbox>
+                  Use Cloudflare WARP Proxy
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    (Bypass IP bans by using Cloudflare WARP network)
+                  </Text>
+                </Checkbox>
+              </Form.Item>
+              
+              <Form.Item
+                name="use_my_ip"
+                valuePropName="checked"
+                initialValue={false}
+                style={{ marginBottom: 0 }}
+              >
+                <Checkbox>
+                  Use Custom Proxy (Bright Data, Proxynetic, etc.)
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    (Use external proxy service for scraping)
+                  </Text>
+                </Checkbox>
+              </Form.Item>
+              
+              <Form.Item
+                noStyle
+                shouldUpdate={(prevValues, currentValues) => prevValues.use_my_ip !== currentValues.use_my_ip}
+              >
+                {({ getFieldValue }) => {
+                  const useMyIP = getFieldValue('use_my_ip');
+                  if (useMyIP) {
+                    return (
+                      <Form.Item
+                        name="user_proxy"
+                        label="Proxy Address"
+                        rules={[
+                          { 
+                            required: true, 
+                            message: 'Please enter proxy address' 
+                          },
+                          {
+                            pattern: /^(http|https|socks5):\/\/.+/,
+                            message: 'Must be in format: http://HOST:PORT or socks5://HOST:PORT'
+                          }
+                        ]}
+                        extra={
+                          <div style={{ fontSize: 12 }}>
+                            <Text type="secondary">
+                              <strong>Bright Data (3proxy on VPS):</strong> <code>http://2.59.119.90:3128</code>
+                              <br />
+                              <strong>Proxynetic:</strong> <code>socks5://gate.proxynetic.com:1080</code>
+                              <br />
+                              <strong>SSH Tunnel:</strong> <code>socks5://YOUR_IP:1080</code>
+                              <br />
+                              <Text type="warning" style={{ fontSize: 11 }}>
+                                ⚠️ Frontend is on Vercel, so use VPS IP (2.59.119.90:3128) not localhost
+                              </Text>
+                            </Text>
+                          </div>
+                        }
+                      >
+                        <Input 
+                          placeholder="http://2.59.119.90:3128 or socks5://gate.proxynetic.com:1080"
+                          prefix="🌐"
+                        />
+                      </Form.Item>
+                    );
+                  }
+                  return null;
+                }}
+              </Form.Item>
+            </Space>
+          </Form.Item>
+
+          {/* User IP Info */}
+          {userIP && (
+            <Form.Item label="Your IP Address">
+              <Space>
+                <Tag color="blue">{userIP.ip}</Tag>
+                {userIP.country && <Tag>{userIP.country}</Tag>}
+                {userIP.city && <Tag>{userIP.city}</Tag>}
+                {detectingIP && <Text type="secondary">Detecting...</Text>}
+              </Space>
+            </Form.Item>
+          )}
 
           <Form.Item>
             <Button
@@ -395,9 +532,31 @@ const Campaigns: React.FC = () => {
         }
         
         // Keep form inputs filled - don't reset
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error starting profile scraping:', error);
-        message.error('Failed to start profile scraping campaign');
+        
+        // Extract detailed error message
+        let errorMessage = 'Failed to start profile scraping campaign';
+        if (error.response?.data?.detail) {
+          if (typeof error.response.data.detail === 'string') {
+            errorMessage = error.response.data.detail;
+          } else if (error.response.data.detail.error) {
+            errorMessage = error.response.data.detail.error;
+            // Show traceback in console for debugging
+            if (error.response.data.detail.traceback) {
+              console.error('Backend traceback:', error.response.data.detail.traceback);
+            }
+          }
+        }
+        
+        // Show detailed error message
+        message.error({
+          content: errorMessage,
+          duration: 10, // Show for 10 seconds
+        });
+        
+        // Also log full error to console
+        console.error('Full error details:', error.response?.data);
       } finally {
         setLoading(false);
       }
