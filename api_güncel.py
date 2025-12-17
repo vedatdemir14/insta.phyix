@@ -34,9 +34,7 @@ try:
 except (ImportError, Exception) as e:
     EMBEDDING_AVAILABLE = False
     print(f"⚠️ Embedding-based linkleme sistemi yüklenemedi: {e}")
-    print("💡 VPS'te model yoksa bu normaldir. Model yüklemek için:")
-    print("   1. Fine-tuned model: python train_health_embedding.py")
-    print("   2. Base model: İlk kullanımda otomatik indirilir (internet gerekli)")
+    
 
 app = Flask(__name__)
 
