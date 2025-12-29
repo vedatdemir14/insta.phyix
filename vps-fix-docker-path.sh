@@ -48,3 +48,4 @@ echo "   3. Veya PATH'i kalıcı yapın: echo 'export PATH=\"/usr/bin:/usr/local
 
 
 
+

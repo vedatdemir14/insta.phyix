@@ -210,7 +210,8 @@ async def location_scraping(request: LocationScrapingRequest):
             request.locations,
             request.max_profiles,
             use_warp=request.use_warp,
-            user_proxy=request.user_proxy
+            user_proxy=request.user_proxy,
+            user_ip=request.user_ip
         )
         
         print(f"✅ Scraping completed! Result type: {type(result)}")

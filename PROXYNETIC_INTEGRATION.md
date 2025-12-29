@@ -114,3 +114,4 @@ VPS'te bir proxy chain oluşturup, authentication'ı orada handle edebilirsiniz.
 **Çözüm:** Proxynetic dashboard'da rotating proxy'nin aktif olduğunu kontrol edin.
 
 
+

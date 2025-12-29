@@ -65,3 +65,4 @@ Artık VPS'te scraping yaparken oluşan hatalar:
 
 
 
+

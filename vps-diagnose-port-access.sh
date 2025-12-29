@@ -78,3 +78,4 @@ echo "5. Hostingdunyam firewall'unda port açık olmalı"
 
 
 
+

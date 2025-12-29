@@ -20,3 +20,4 @@ echo ""
 echo "🔍 Testing 3proxy manually (foreground)..."
 /usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
 
+

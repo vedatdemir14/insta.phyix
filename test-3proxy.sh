@@ -35,3 +35,4 @@ echo ""
 echo "Test 5: Recent logs..."
 tail -10 /var/log/3proxy/3proxy.log 2>/dev/null || echo "No log file yet"
 
+

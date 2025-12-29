@@ -3,8 +3,13 @@ import axios from 'axios';
 // Vercel'de HTTPS backend URL kullan (Mixed Content hatası için)
 const getApiBaseUrl = (): string => {
   // Vercel'de proxy kullan (SSL sertifika sorunu için)
-  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
-    return '/api'; // Vercel proxy kullan (vercel.json'daki rewrite rule)
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // Vercel domain'lerini kontrol et
+    if (hostname.includes('vercel.app') || hostname.includes('vercel.com')) {
+      // Vercel proxy kullan - /api path'i vercel.json'daki rewrite rule ile backend'e yönlendirilecek
+      return '/api';
+    }
   }
   // Local development için environment variable veya default
   const envUrl = (process as any).env?.REACT_APP_API_URL;

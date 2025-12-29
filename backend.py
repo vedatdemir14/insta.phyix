@@ -825,7 +825,7 @@ class InstagramBackend:
             print(f"⚠️ Error checking/starting WARP: {str(e)}")
             return False
 
-    def selenium_location_scraper(self, ig_user, ig_pass, location_urls, max_profiles=200, use_warp=False, user_proxy=None):
+    def selenium_location_scraper(self, ig_user, ig_pass, location_urls, max_profiles=200, use_warp=False, user_proxy=None, user_ip=None):
         """
         More robust Selenium-based scraper with better page detection and multiple fallback strategies
         
@@ -847,6 +847,10 @@ class InstagramBackend:
                 use_warp = False
         print(f"🚀 selenium_location_scraper called", flush=True)
         print(f"📋 Parameters: ig_user={ig_user}, max_profiles={max_profiles}", flush=True)
+        if user_ip:
+            print(f"👤 User IP: {user_ip}", flush=True)
+        if user_proxy:
+            print(f"🌐 User Proxy: {user_proxy}", flush=True)
         print(f"📋 Location URLs: {location_urls}", flush=True)
         sys.stdout.flush()
         
@@ -902,6 +906,8 @@ class InstagramBackend:
         # Proxy desteği: Önce user_proxy, sonra WARP
         if user_proxy:
             print(f"🌐 Using proxy: {user_proxy}")
+            if user_ip:
+                print(f"👤 User IP (will be used via proxy): {user_ip}")
             # Proxy formatını kontrol et ve düzenle
             proxy_url = user_proxy
             
@@ -992,13 +998,6 @@ class InstagramBackend:
             # Remove webdriver property
             driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
-            # Override Chrome object
-            driver.execute_script("""
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-            """)
-            
             # Override languages
             driver.execute_script("""
                 Object.defineProperty(navigator, 'languages', {
@@ -1016,24 +1015,33 @@ class InstagramBackend:
                 );
             """)
             
-            # Override plugins length
-            driver.execute_script("""
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => {
-                        const plugins = [];
-                        for (let i = 0; i < 5; i++) {
-                            plugins.push({
-                                0: { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' },
-                                description: 'Portable Document Format',
-                                filename: 'internal-pdf-viewer',
-                                length: 1,
-                                name: 'Chrome PDF Plugin'
-                            });
-                        }
-                        return plugins;
+            # Override plugins (try-catch ile korumalı - Chrome'un yeni versiyonlarında read-only olabilir)
+            try:
+                driver.execute_script("""
+                    try {
+                        Object.defineProperty(navigator, 'plugins', {
+                            get: () => {
+                                const plugins = [];
+                                for (let i = 0; i < 5; i++) {
+                                    plugins.push({
+                                        0: { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+                                        description: 'Portable Document Format',
+                                        filename: 'internal-pdf-viewer',
+                                        length: 1,
+                                        name: 'Chrome PDF Plugin'
+                                    });
+                                }
+                                return plugins;
+                            },
+                            configurable: true
+                        });
+                    } catch (e) {
+                        console.log('Could not override navigator.plugins:', e);
                     }
-                });
-            """)
+                """)
+            except Exception as e:
+                print(f"⚠️ Could not override navigator.plugins: {e}")
+                print("⚠️ Continuing without plugins override...")
             
             print("✅ Enhanced anti-detection scripts executed")
             

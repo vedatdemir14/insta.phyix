@@ -62,3 +62,4 @@ echo "   (Örn: DigitalOcean, AWS, Azure, vb. kendi firewall'ları var)"
 
 
 
+

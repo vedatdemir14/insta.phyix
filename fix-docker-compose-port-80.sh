@@ -54,3 +54,4 @@ echo "✅ Done!"
 echo "📋 Frontend is now accessible at: http://2.59.119.90:3000"
 echo "📋 Backend can access 3proxy at: localhost:3128"
 
+
