@@ -4,9 +4,12 @@ __pycache__/
 *$py.class
 *.so
 .Python
+<<<<<<< HEAD
 env/
 venv/
 ENV/
+=======
+>>>>>>> 67cf096b532aef440fa5b11710eb65416a1400e1
 build/
 develop-eggs/
 dist/
@@ -23,6 +26,7 @@ wheels/
 .installed.cfg
 *.egg
 
+<<<<<<< HEAD
 # Node
 node_modules/
 npm-debug.log*
@@ -41,12 +45,19 @@ frontend/.pnp.js
 htmlcov/
 .tox/
 .hypothesis/
+=======
+# Virtual environments
+venv/
+env/
+ENV/
+>>>>>>> 67cf096b532aef440fa5b11710eb65416a1400e1
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+<<<<<<< HEAD
 *~
 .DS_Store
 
@@ -55,10 +66,17 @@ htmlcov/
 .env.local
 .env.*.local
 *.env
+=======
+
+# OS
+.DS_Store
+Thumbs.db
+>>>>>>> 67cf096b532aef440fa5b11710eb65416a1400e1
 
 # Git
 .git/
 .gitignore
+<<<<<<< HEAD
 .gitattributes
 
 # Docker
@@ -87,3 +105,24 @@ __pycache__/
 .coverage
 htmlcov/
 
+=======
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Documentation
+README*.md
+*.md
+
+# Test files
+test_*.py
+*_test.py
+>>>>>>> 67cf096b532aef440fa5b11710eb65416a1400e1

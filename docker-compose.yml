@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+<<<<<<< HEAD
   backend:
     build:
       context: .
@@ -21,10 +22,27 @@ services:
       - app-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+=======
+  api:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SUPABASE_URL=https://qdvfntffaorztslkukgb.supabase.co
+      - SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkdmZudGZmYW9yenRzbGt1a2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDU5NDg4MzUsImV4cCI6MjA2MTUyNDgzNX0.89PKgpdI0ItYQ-4FlY2ZSN5lSnyr0aIMuh4cAPjpKYs
+      - OPENROUTER_API_KEY=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
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/test"]
+>>>>>>> 67cf096b532aef440fa5b11710eb65416a1400e1
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+<<<<<<< HEAD
 
   frontend:
     build:
@@ -43,3 +61,5 @@ networks:
   app-network:
     driver: bridge
 
+=======
+>>>>>>> 67cf096b532aef440fa5b11710eb65416a1400e1
